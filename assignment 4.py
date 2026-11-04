@@ -15,7 +15,7 @@ WIDTH, HEIGHT = 960, 540
 FPS = 60
 GROUND_Y = HEIGHT - 80
 NUM_LEVELS = 1       # levels that exist right now: raise this as you add levels
-FINAL_LEVEL = 10     # the level that gets the final boss
+FINAL_LEVEL = 5      # the level that gets the final boss
 
 CHAR_SCALE = 0.45
 PISTOL_SCALE = 0.2
@@ -174,8 +174,7 @@ LEVEL_BOSS_TALK = {
 }
 
 BOSS_NAMES = [
-    "Rusty", "Crate Captain", "Sly Sam", "Iron Hat", "Shadow Suit",
-    "Madam Mayhem", "Big Bolt", "Night Owl", "The Collector", "THE BIG BOSS",
+    "Rusty", "Crate Captain", "Sly Sam", "Big Bolt", "THE BIG BOSS",
 ]
 
 
