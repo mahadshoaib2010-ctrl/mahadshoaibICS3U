@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import random
 
@@ -14,8 +15,8 @@ SAVE_PATH = os.path.join(BASE_DIR, "save.json")
 WIDTH, HEIGHT = 960, 540
 FPS = 60
 GROUND_Y = HEIGHT - 80
-NUM_LEVELS = 1       # levels that exist right now: raise this as you add levels
-FINAL_LEVEL = 10     # the level that gets the final boss
+NUM_LEVELS = 2       # levels that exist right now: raise this by 1 each time you finish a level (max 5)
+FINAL_LEVEL = 5      # the level that gets the final boss (THE BIG BOSS)
 
 CHAR_SCALE = 0.45
 PISTOL_SCALE = 0.2
@@ -45,7 +46,56 @@ LEVEL_PLATFORMS = {
         (680, GROUND_Y - 110, 200, PLATFORM_HEIGHT),    # low right
         (370, GROUND_Y - 210, 220, PLATFORM_HEIGHT),    # high middle
     ],
+    2: [   # level 2, phase 1 (the docks): three tiers of platforms
+        (40, GROUND_Y - 110, 170, PLATFORM_HEIGHT),
+        (395, GROUND_Y - 110, 170, PLATFORM_HEIGHT),
+        (750, GROUND_Y - 110, 170, PLATFORM_HEIGHT),
+        (160, GROUND_Y - 210, 190, PLATFORM_HEIGHT),
+        (610, GROUND_Y - 210, 190, PLATFORM_HEIGHT),
+        (385, GROUND_Y - 305, 190, PLATFORM_HEIGHT),
+    ],
 }
+
+# ---- Level 2: docks -> climb the lighthouse -> Crate Captain ----
+L2_GRUNTS = 20             # phase 1: grunts to beat (they arrive two at a time, one per side)
+L2_SPAWN_DELAY = 2.2       # seconds between each pair of grunts
+L2_MAX_ALIVE = 8           # most grunts alive at once
+CLIMB_COUNT = 30           # phase 2: number of platforms to climb
+CLIMB_STEP = 112           # height between platforms (a jump reaches about 160)
+CLIMB_PLATFORM_W = 180
+TIDE_SPEED = 42            # how fast the water rises (pixels/second) ...
+TIDE_GROWTH = 0.35         # ... and how much faster it gets every second
+TIDE_DAMAGE = 30           # HP per second while you are in the water
+TIDE_START_BELOW = 140     # the tide starts this far below the docks
+HORIZON_Y = 300            # where the sea meets the sky
+LIGHTHOUSE_SHORT_TOP = 110 # how tall the lighthouse looks in phase 1
+LEVEL2_ROOM_PLATFORMS = [  # phase 3: ledges inside the lamp room
+    (80, GROUND_Y - 120, 200, PLATFORM_HEIGHT),
+    (680, GROUND_Y - 120, 200, PLATFORM_HEIGHT),
+    (380, GROUND_Y - 220, 200, PLATFORM_HEIGHT),
+]
+
+
+def make_climb_platforms():
+    """The zig-zag of platforms up the lighthouse (same every time). The last one is the balcony."""
+    rng = random.Random(2)
+    plats = []
+    left = 380
+    for i in range(1, CLIMB_COUNT + 1):
+        step = rng.choice([-240, -120, 120, 240])
+        nxt = left + step
+        if nxt < 40 or nxt > 740:
+            nxt = left - step
+        left = nxt
+        plats.append(pygame.Rect(left, GROUND_Y - CLIMB_STEP * i, CLIMB_PLATFORM_W, PLATFORM_HEIGHT))
+    balcony_top = GROUND_Y - CLIMB_STEP * (CLIMB_COUNT + 1)
+    plats.append(pygame.Rect(300, balcony_top, 360, PLATFORM_HEIGHT))
+    return plats
+
+
+CLOUDS = [(80, 60, 140), (360, 140, 180), (700, 40, 160), (560, 230, 120), (180, 260, 150)]
+STARS = [(37, 20), (120, 90), (210, 40), (330, 110), (450, 30), (520, 160), (640, 60),
+         (730, 130), (820, 25), (900, 100), (60, 200), (280, 220), (600, 250), (860, 210)]
 PLATFORM_BREAK_DELAY = 1.5     # seconds between the boss arriving and the platforms breaking
 
 # Boss hazards
@@ -55,7 +105,8 @@ ROCK_DAMAGE = 20
 ROCK_SPEED = 700
 ROCK_WARNING = 0.9
 BOSS_ATTACKS = ["shoot", "wave", "rocks"]
-BOSS_ATTACK_LISTS = {1: ["wave", "rain"]}      # Rusty: shockwave, then falling nuts and bolts
+BOSS_ATTACK_LISTS = {1: ["wave", "rain"],      # Rusty: shockwave, then falling nuts and bolts
+                     2: ["hook", "poison", "tsunami"]}   # Crate Captain: hook, poison crate, tidal wave
 
 IDLE_SHEET = os.path.join(ASSETS, "idle.jpg")
 WALK_SHEET = os.path.join(ASSETS, "walk_right.jpg")
@@ -122,10 +173,11 @@ ATTACK_FIRE_FRAME = 3                        # the bone is released when this ce
 # ---- Rusty (level 1 boss) sprites ----
 # Save the five sheets in the assets folder as:
 #   rusty_idle  rusty_walk  rusty_jump  rusty_wave  rusty_rain
-BOSS_SPRITES = {1: "rusty"}          # level number -> sheet name prefix
+BOSS_SPRITES = {1: "rusty", 2: "crate_captain"}          # level number -> sheet name prefix
 BOSS_SCALE = 0.72                    # size of boss sprites (1.0 = original sheet size)
 BOSS_FEET_PAD = 12                   # empty pixels under the feet in each sheet cell
 BOSS_SIZE_SPRITE = (110, 190)        # boss hitbox size (width, height)
+BOSS_SIZES = {2: (110, 170)}         # per-level override for the hitbox
 _RUSTY_CELLS = [(30, 80, 220, 327), (271, 80, 232, 327), (520, 80, 232, 327), (774, 80, 220, 327),
                 (30, 429, 298, 315), (362, 429, 299, 315), (695, 429, 298, 315)]
 RUSTY_RECTS = [pygame.Rect(x, y, w, h - BOSS_FEET_PAD) for x, y, w, h in _RUSTY_CELLS]
@@ -141,7 +193,30 @@ RUSTY_STATES = {
 WAVE_SEQUENCE = [(0, 0.35), (1, 0.35), (2, 0.20), (3, 0.20), (4, 0.30)]   # positions in the "wave" list
 WAVE_RELEASE = 2                     # the shockwave starts when this position shows (the slam)
 RAIN_SEQUENCE = [(0, 0.40), (1, 0.90)]
-ATTACK_SEQUENCES = {"attack": ATTACK_SEQUENCE, "wave": WAVE_SEQUENCE, "rain": RAIN_SEQUENCE}
+
+# ---- Crate Captain (level 2 boss) sprites ----
+# The sheets were cleaned up and saved as transparent strips in the assets folder:
+#   crate_captain_idle / walk / jump / hook / poison / tsunami / crate   (.png)
+CAPTAIN_SCALE = 0.57                 # size of the Crate Captain (1.0 = original picture size)
+CAPTAIN_FRAMES = {"idle": 7, "walk": 7, "jump": 7, "hook": 6, "poison": 6, "tsunami": 4}
+TSUNAMI_SCALE = 0.65                 # size of the tidal wave picture
+HOOK_SEQUENCE = [(0, 0.30), (1, 0.25), (2, 0.18), (3, 0.22), (4, 0.15), (5, 0.20)]
+POISON_SEQUENCE = [(0, 0.35), (1, 0.30), (2, 0.15), (3, 0.40)]
+TSUNAMI_SEQUENCE = [(0, 0.35), (1, 0.25), (2, 0.30), (3, 0.30)]   # crouch, jump, SLAM (wave starts), recover
+HOOK_REACH_LONG = 222                # how far the hook flies when fully out (pixels)
+HOOK_REACH_SHORT = 100               # and while it is being pulled back
+HOOK_DAMAGE = 18
+POISON_HIT = 14                      # thrown crate hits you
+POISON_TICK = 6                      # standing in the puddle (once per second)
+POISON_LIFE = 4.0                    # seconds a puddle stays
+TSUNAMI_SPEED = 330
+TSUNAMI_DAMAGE = 22
+TSUNAMI_HEIGHT = 140                 # how tall the damaging part of the wave is (jump it or climb a high ledge)
+
+ATTACK_SEQUENCES = {"attack": ATTACK_SEQUENCE, "wave": WAVE_SEQUENCE, "rain": RAIN_SEQUENCE,
+                    "hook": HOOK_SEQUENCE, "poison": POISON_SEQUENCE, "tsunami": TSUNAMI_SEQUENCE}
+# the picture (position in the sequence) when the attack actually goes off
+ATTACK_RELEASE = {"wave": WAVE_RELEASE, "hook": 2, "poison": 2, "tsunami": 2}
 
 ENEMY_TYPES = {
     "grunt": {"hp": 30, "speed": 90, "size": (44, 70), "color": (190, 60, 60),
@@ -164,6 +239,11 @@ LEVEL_INTRO = {
         ("MISSION", "Jump onto the platforms to get the high ground. Careful, the grunts can climb them too."),
         ("MISSION", "Take out every grunt. Once they are gone, their boss will come for you."),
     ],
+    2: [
+        ("MISSION", "The docks. Grunts are coming from BOTH sides at once, and the lighthouse watches from behind you."),
+        ("MISSION", "More platforms here. Use them for the high ground, but the grunts can follow you up."),
+        ("MISSION", "Take down all 20 grunts."),
+    ],
 }
 LEVEL_BOSS_TALK = {
     1: [
@@ -171,11 +251,21 @@ LEVEL_BOSS_TALK = {
         ("RUSTY", "This alley is MINE. Nobody walks out of here with a golden gun."),
         ("RUSTY", "Let's see how well you dance without those platforms!"),
     ],
+    2: [
+        ("CRATE CAPTAIN", "You climbed all the way up here for nothing, pal."),
+        ("CRATE CAPTAIN", "Every crate in this harbour is mine. And I've got plenty to throw at you!"),
+    ],
 }
 
-BOSS_NAMES = [
-    "Rusty", "Crate Captain", "Sly Sam", "Iron Hat", "Shadow Suit",
-    "Madam Mayhem", "Big Bolt", "Night Owl", "The Collector", "THE BIG BOSS",
+BOSS_NAMES = ["Rusty", "Crate Captain", "Sly Sam", "Big Bolt", "THE BIG BOSS"]
+
+# Level 2 phase-change dialogue
+L2_TIDE_TALK = [
+    ("MISSION", "That's the last grunt... but the sea is angry. The TIDE is rising fast!"),
+    ("MISSION", "Climb the platforms up the lighthouse before the water catches you!"),
+]
+L2_TOP_TALK = [
+    ("MISSION", "You made it to the lamp room at the top. Someone is waiting for you inside..."),
 ]
 
 
@@ -285,7 +375,7 @@ def frames_to_art(frames):
 def flip_art(art):
     out = {}
     for key, value in art.items():
-        if key == "bone":
+        if key in ("bone", "crate"):
             out[key] = pygame.transform.flip(value, True, False)
         else:
             out[key] = [(pygame.transform.flip(s, True, False), s.get_width() - ax) for s, ax in value]
@@ -502,13 +592,53 @@ def build_boss_art(prefix):
     return art
 
 
+def load_strip(path, count, scale):
+    """A strip of equal-sized frames (already transparent) -> list of (surface, anchor_x)."""
+    sheet = pygame.image.load(path).convert_alpha()
+    fw = sheet.get_width() // count
+    frames = []
+    for i in range(count):
+        part = sheet.subsurface((i * fw, 0, fw, sheet.get_height())).copy()
+        size = (max(1, int(fw * scale)), max(1, int(part.get_height() * scale)))
+        frames.append((pygame.transform.smoothscale(part, size), size[0] / 2))
+    return frames
+
+
+def build_captain_art():
+    strips = {}
+    for name, count in CAPTAIN_FRAMES.items():
+        path = find_asset("crate_captain_" + name)
+        if path == "":
+            return None
+        scale = TSUNAMI_SCALE if name == "tsunami" else CAPTAIN_SCALE
+        strips[name] = load_strip(path, count, scale)
+    crate_path = find_asset("crate_captain_crate")
+    if crate_path == "":
+        return None
+    crate = pygame.image.load(crate_path).convert_alpha()
+    crate = pygame.transform.smoothscale(crate, (int(crate.get_width() * CAPTAIN_SCALE),
+                                                 int(crate.get_height() * CAPTAIN_SCALE)))
+    jump = strips["jump"]
+    return {
+        "idle": strips["idle"],
+        "walk": strips["walk"],
+        "jump_up": [jump[2]],
+        "jump_down": [jump[4]],
+        "hook": strips["hook"],
+        "poison": strips["poison"][:4],
+        "tsunami": [jump[1], jump[2], jump[6], jump[5]],     # stomp pose that calls the wave
+        "tsunami_wave": strips["tsunami"],
+        "crate": crate,
+    }
+
+
 def get_boss_art(level_no):
     """(right, left) art for this level's boss, or None if it has no sprite sheets."""
     if level_no not in BOSS_SPRITES:
         return None
     prefix = BOSS_SPRITES[level_no]
     if prefix not in BOSS_ART:
-        art = build_boss_art(prefix)
+        art = build_captain_art() if prefix == "crate_captain" else build_boss_art(prefix)
         BOSS_ART[prefix] = None if art is None else (art, flip_art(art))
     return BOSS_ART[prefix]
 
@@ -669,14 +799,15 @@ class Player:
         frames = self.idle_r if right else self.idle_l
         return frames[int(self.anim_time * 6) % 6]
 
-    def draw(self, screen):
+    def draw(self, screen, scroll=0.0):
         blink_off = self.invuln > 0 and int(self.invuln * 12) % 2 == 0
         if not blink_off:
             image = self.current_image()
-            screen.blit(image, image.get_rect(midbottom=(self.x, self.y)))
-            self.pistol.draw(screen, self.hand_pos(), self.facing)
+            screen.blit(image, image.get_rect(midbottom=(self.x, self.y + scroll)))
+            hx, hy = self.hand_pos()
+            self.pistol.draw(screen, (hx, hy + scroll), self.facing)
         for b in self.bullets:
-            pygame.draw.rect(screen, (255, 215, 0), (b["x"] - 6, b["y"] - 2, 12, 5))
+            pygame.draw.rect(screen, (255, 215, 0), (b["x"] - 6, b["y"] + scroll - 2, 12, 5))
 
 
 # ------------------------------------------------------------------
@@ -729,7 +860,7 @@ class Enemy:
             self.size = (56, GRUNT_HEIGHT)
         elif boss_art is not None:
             self.art_right, self.art_left = boss_art
-            self.size = BOSS_SIZE_SPRITE
+            self.size = BOSS_SIZES.get(level_no, BOSS_SIZE_SPRITE)
         else:
             paint = color if color is not None else cfg["color"]
             if kind == "boss":
@@ -829,9 +960,10 @@ class Enemy:
             self.attack_time += dt * (1.3 if self.phase_two() else 1.0)
             sequence = ATTACK_SEQUENCES[self.attack_name]
             position = frame_at(sequence, self.attack_time)
-            if self.attack_name == "wave" and position >= WAVE_RELEASE and not self.attack_fired:
+            release = ATTACK_RELEASE.get(self.attack_name)
+            if release is not None and position >= release and not self.attack_fired:
                 self.attack_fired = True
-                self.boss_attack("wave", player_x, bullets, hazards)
+                self.boss_attack(self.attack_name, player_x, bullets, hazards)
             if self.attack_time >= sum(d for _, d in sequence):
                 self.attack_time = None
                 self.attack_name = ""
@@ -871,6 +1003,26 @@ class Enemy:
             self.fire(bullets)
         elif attack == "wave":
             hazards.append({"type": "wave", "x": self.x, "vx": self.facing * WAVE_SPEED, "alive": True})
+        elif attack == "hook":
+            hazards.append({"type": "hook", "x": self.x, "y": self.y, "dir": self.facing,
+                            "t": 0.0, "hit": False, "alive": True})
+        elif attack == "poison":
+            art = self.art_right if self.facing == 1 else self.art_left
+            targets = [player_x]
+            if self.phase_two():
+                targets.append(player_x + random.choice([-1, 1]) * random.uniform(90, 180))
+            x0 = self.x + self.facing * 40
+            y0 = self.y - self.size[1] * 0.8
+            flight, gravity = 0.9, 1500.0
+            for tx in targets:
+                tx = max(40.0, min(WIDTH - 40.0, tx))
+                hazards.append({"type": "crate", "x": x0, "y": y0, "vx": (tx - x0) / flight,
+                                "vy": (GROUND_Y - 16 - y0 - 0.5 * gravity * flight * flight) / flight,
+                                "g": gravity, "rot": 0.0, "img": art["crate"], "alive": True})
+        elif attack == "tsunami":
+            art = self.art_right if self.facing == 1 else self.art_left
+            hazards.append({"type": "tsunami", "x": self.x, "dir": self.facing, "age": 0.0,
+                            "frames": art["tsunami_wave"], "alive": True})
         else:
             count = 3 + (2 if self.phase_two() else 0)
             for i in range(count):
@@ -958,6 +1110,26 @@ class Level:
         self.boss_spawned = False
         self.boss_dead = False
         self.boss_name = BOSS_NAMES[number - 1]
+        self.earned = 0                # coins collected this run: only kept if you beat the whole level
+        self.scroll = 0.0              # how far the camera has moved up (only used by climbing levels)
+        self.pending_dialogue = None   # a level can set this to show a dialogue (e.g. between phases)
+
+    def status_text(self):
+        """Text under the level number in the HUD, or None for the default."""
+        return None
+
+    def phase_dialogue_done(self):
+        """Called when a between-phase dialogue has been clicked through."""
+        pass
+
+    def draw_background(self, screen):
+        t = (self.number - 1) / (FINAL_LEVEL - 1)
+        screen.fill(lerp_color((92, 150, 200), (90, 40, 55), t))
+        ground = lerp_color((60, 120, 60), (50, 40, 40), t)
+        pygame.draw.rect(screen, ground, (0, GROUND_Y, WIDTH, HEIGHT - GROUND_Y))
+
+    def draw_foreground(self, screen):
+        pass
 
     def spawn_side(self):
         return random.choice([-40, WIDTH + 40])
@@ -975,7 +1147,7 @@ class Level:
             if self.number == FINAL_LEVEL:
                 self.boss = Enemy("final_boss", boss_x, self.number)
             else:
-                color = lerp_color((200, 80, 30), (150, 0, 30), (self.number - 1) / 9)
+                color = lerp_color((200, 80, 30), (150, 0, 30), (self.number - 1) / (FINAL_LEVEL - 1))
                 self.boss = Enemy("boss", boss_x, self.number, color)
             self.boss.facing = 1 if self.player.x > boss_x else -1
             self.enemies.append(self.boss)
@@ -1020,6 +1192,48 @@ class Level:
                     p.take_damage(WAVE_DAMAGE * scale)
                 if h["x"] < -60 or h["x"] > WIDTH + 60:
                     h["alive"] = False
+            elif h["type"] == "hook":
+                h["t"] += dt
+                reach = HOOK_REACH_LONG if h["t"] < 0.18 else HOOK_REACH_SHORT
+                if h["dir"] == 1:
+                    r = pygame.Rect(int(h["x"]) + 20, int(h["y"]) - 125, reach, 40)
+                else:
+                    r = pygame.Rect(int(h["x"]) - 20 - reach, int(h["y"]) - 125, reach, 40)
+                if not h["hit"] and r.colliderect(p.rect):
+                    p.take_damage(HOOK_DAMAGE * scale)
+                    h["hit"] = True
+                if h["t"] > 0.40:
+                    h["alive"] = False
+            elif h["type"] == "crate":
+                h["vy"] += h["g"] * dt
+                h["x"] += h["vx"] * dt
+                h["y"] += h["vy"] * dt
+                h["rot"] += 360 * dt
+                r = pygame.Rect(0, 0, 44, 44)
+                r.center = (int(h["x"]), int(h["y"]))
+                hit = r.colliderect(p.rect)
+                if hit:
+                    p.take_damage(POISON_HIT * scale)
+                if hit or h["y"] >= GROUND_Y - 16:
+                    h["alive"] = False
+                    self.hazards.append({"type": "puddle", "x": h["x"], "life": POISON_LIFE, "alive": True})
+            elif h["type"] == "puddle":
+                h["life"] -= dt
+                r = pygame.Rect(0, 0, 150, 24)
+                r.midbottom = (int(h["x"]), GROUND_Y)
+                if r.colliderect(p.rect):
+                    p.take_damage(POISON_TICK * scale)
+                if h["life"] <= 0:
+                    h["alive"] = False
+            elif h["type"] == "tsunami":
+                h["age"] += dt
+                h["x"] += h["dir"] * TSUNAMI_SPEED * dt
+                r = pygame.Rect(0, 0, 120, TSUNAMI_HEIGHT)
+                r.midbottom = (int(h["x"]), GROUND_Y)
+                if r.colliderect(p.rect):
+                    p.take_damage(TSUNAMI_DAMAGE * scale)
+                if h["x"] < -200 or h["x"] > WIDTH + 200:
+                    h["alive"] = False
             else:
                 if h["timer"] > 0:
                     h["timer"] -= dt
@@ -1054,7 +1268,7 @@ class Level:
 
         for e in self.enemies:
             if e.hp <= 0:
-                self.progress["coins"] += e.coins
+                self.earned += e.coins
                 if e.is_boss:
                     self.boss_dead = True
                 else:
@@ -1113,6 +1327,25 @@ class Level:
                           (x + 4, GROUND_Y - 30), (x + 12, GROUND_Y - 12), (x + 20, GROUND_Y)]
                 pygame.draw.polygon(screen, (255, 150, 30), points)
                 pygame.draw.polygon(screen, (255, 230, 120), points, 2)
+            elif h["type"] == "crate":
+                img = pygame.transform.rotate(h["img"], h["rot"])
+                screen.blit(img, img.get_rect(center=(int(h["x"]), int(h["y"]))))
+            elif h["type"] == "puddle":
+                fade = min(1.0, h["life"] / 0.8)
+                x = int(h["x"])
+                rim = lerp_color((20, 20, 30), (130, 220, 60), fade)
+                fill = lerp_color((20, 20, 30), (110, 40, 160), fade)
+                pygame.draw.ellipse(screen, rim, (x - 78, GROUND_Y - 16, 156, 24))
+                pygame.draw.ellipse(screen, fill, (x - 70, GROUND_Y - 13, 140, 17))
+                for i in range(3):
+                    bx = x - 40 + i * 40 + int(8 * math.sin(h["life"] * 4 + i))
+                    pygame.draw.circle(screen, rim, (bx, GROUND_Y - 18 - int((h["life"] * 20 + i * 7) % 12)), 3)
+            elif h["type"] == "tsunami":
+                index = min(len(h["frames"]) - 1, int(h["age"] / 0.15))
+                image, anchor = h["frames"][index]
+                screen.blit(image, (h["x"] - anchor, GROUND_Y + 6 - image.get_height()))
+            elif h["type"] == "hook":
+                pass        # the hook is part of the Crate Captain's picture
             else:
                 x = int(h["x"])
                 if h["timer"] > 0:
@@ -1121,7 +1354,13 @@ class Level:
                     pygame.draw.ellipse(screen, (230, 50, 50), (x - w // 2, GROUND_Y - 6, w, 12), 3)
                 else:
                     y = int(h["y"])
-                    if x % 2 == 0:
+                    if self.number == 2:
+                        crate = pygame.Rect(x - 17, y - 17, 34, 34)
+                        pygame.draw.rect(screen, (175, 125, 70), crate)
+                        pygame.draw.rect(screen, (70, 45, 25), crate, 3)
+                        pygame.draw.line(screen, (70, 45, 25), crate.topleft, crate.bottomright, 3)
+                        pygame.draw.line(screen, (70, 45, 25), crate.topright, crate.bottomleft, 3)
+                    elif x % 2 == 0:
                         hexagon = [(x - 18, y), (x - 9, y - 16), (x + 9, y - 16),
                                    (x + 18, y), (x + 9, y + 16), (x - 9, y + 16)]
                         pygame.draw.polygon(screen, (150, 95, 55), hexagon)
@@ -1144,6 +1383,298 @@ class Level:
             else:
                 pygame.draw.circle(screen, (255, 70, 70), (int(eb["x"]), int(eb["y"])), 6)
                 pygame.draw.circle(screen, (255, 220, 220), (int(eb["x"]), int(eb["y"])), 3)
+
+
+# ------------------------------------------------------------------
+# LEVEL 2: three phases
+#   docks      - 20 grunts arrive from both sides, platforms to fight on
+#   climb      - the tide rises, climb the lighthouse (the camera follows you up)
+#   boss       - the Crate Captain, inside the lamp room
+# ------------------------------------------------------------------
+class Level2(Level):
+    def __init__(self, number, player, progress):
+        Level.__init__(self, number, player, progress)
+        self.total = L2_GRUNTS
+        self.spawn_delay = L2_SPAWN_DELAY
+        self.max_alive = L2_MAX_ALIVE
+        self.kinds = ["grunt"]
+        self.phase = "docks"          # docks, docks_done, climb, to_boss, boss
+        self.climb_platforms = make_climb_platforms()
+        self.balcony = self.climb_platforms[-1]
+        self.top_world = self.balcony.top - 70          # roof of the lighthouse (world y)
+        self.max_scroll = HEIGHT * 0.6 - self.balcony.top + 40
+        self.tide_y = float(GROUND_Y + TIDE_START_BELOW)
+        self.climb_time = 0.0
+        self.tower_grow = 0.0
+        self.anim_t = 0.0
+        self.beam = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+
+    # ---------- phase logic ----------
+    def spawn_logic(self, dt):
+        """Phase 1: grunts come in pairs, one from each side at the same moment."""
+        if self.phase != "docks" or self.spawned >= self.total:
+            return
+        self.spawn_timer -= dt
+        if self.spawn_timer <= 0 and len(self.enemies) + 2 <= self.max_alive:
+            for side in (-40, WIDTH + 40):
+                self.enemies.append(Enemy("grunt", side, self.number))
+                self.spawned += 1
+            self.spawn_timer = self.spawn_delay
+
+    def start_boss_fight(self):
+        pass        # the lamp room ledges do not break
+
+    def status_text(self):
+        if self.phase in ("docks", "docks_done"):
+            return "PHASE 1 - Grunts left: " + str(self.total - self.killed)
+        if self.phase in ("climb", "to_boss"):
+            height = GROUND_Y - self.balcony.top
+            pct = max(0, min(100, int(100 * (GROUND_Y - self.player.y) / height)))
+            return "PHASE 2 - Climb the lighthouse!  " + str(pct) + "%"
+        return None
+
+    def phase_dialogue_done(self):
+        if self.phase == "docks_done":
+            self.begin_climb()
+        elif self.phase == "to_boss":
+            self.begin_boss_phase()
+
+    def begin_climb(self):
+        self.shatter_platforms()                 # the docks collapse into the sea
+        self.platforms = self.climb_platforms
+        self.enemy_bullets = []
+        self.hazards = []
+        self.tide_y = float(GROUND_Y + TIDE_START_BELOW)
+        self.climb_time = 0.0
+        self.phase = "climb"
+
+    def begin_boss_phase(self):
+        self.phase = "boss"
+        self.platforms = [pygame.Rect(r) for r in LEVEL2_ROOM_PLATFORMS]
+        self.debris = []
+        self.scroll = 0.0
+        p = self.player
+        p.x = 200.0
+        p.y = float(GROUND_Y)
+        p.vy = 0.0
+        p.on_ground = True
+        p.bullets = []
+        self.enemy_bullets = []
+        self.hazards = []
+        self.boss = Enemy("boss", WIDTH - 140, self.number, (175, 115, 55))
+        self.boss.facing = -1
+        self.enemies.append(self.boss)
+        self.boss_spawned = True
+        self.talk_pending = True
+
+    def update(self, dt):
+        self.anim_t += dt
+        if self.phase == "docks" or self.phase == "boss":
+            result = Level.update(self, dt)
+            if (self.phase == "docks" and result == "" and self.spawned >= self.total
+                    and len(self.enemies) == 0):
+                self.phase = "docks_done"
+                self.pending_dialogue = L2_TIDE_TALK
+            return result
+        if self.phase == "climb":
+            return self.update_climb(dt)
+        return "lost" if self.player.hp <= 0 else ""       # waiting for a dialogue to be clicked
+
+    def update_climb(self, dt):
+        p = self.player
+        self.climb_time += dt
+        self.tower_grow = min(1.0, self.tower_grow + dt / 2.5)
+        self.update_platforms(dt)
+
+        speed = TIDE_SPEED + TIDE_GROWTH * self.climb_time
+        self.tide_y -= speed * dt
+        if p.y > self.tide_y + 10:
+            p.hp -= TIDE_DAMAGE * dt
+
+        target = max(0.0, min(self.max_scroll, HEIGHT * 0.6 - p.y))
+        self.scroll += (target - self.scroll) * min(1.0, 8 * dt)
+
+        if p.hp <= 0:
+            return "lost"
+        b = self.balcony
+        if p.on_ground and p.y <= b.top + 1 and b.left <= p.x <= b.right:
+            self.phase = "to_boss"
+            self.pending_dialogue = L2_TOP_TALK
+        return ""
+
+    # ---------- drawing ----------
+    def draw_platforms(self, screen):
+        sc = int(self.scroll)
+        if self.phase == "boss":
+            body, top, edge = (85, 85, 100), (140, 140, 158), (40, 40, 55)
+        else:
+            body, top, edge = (120, 85, 55), (165, 125, 85), (60, 40, 25)
+        for p in self.platforms:
+            r = p.move(0, sc)
+            if r.bottom < 0 or r.top > HEIGHT:
+                continue
+            pygame.draw.rect(screen, body, r)
+            pygame.draw.rect(screen, top, (r.left, r.top, r.width, 4))
+            pygame.draw.rect(screen, edge, r, 2)
+        for d in self.debris:
+            pygame.draw.rect(screen, (120, 85, 55), (d["x"] - 9, d["y"] + sc - 7, 18, 14))
+            pygame.draw.rect(screen, (60, 40, 25), (d["x"] - 9, d["y"] + sc - 7, 18, 14), 2)
+
+    def climb_progress(self):
+        if self.phase in ("climb", "to_boss"):
+            return max(0.0, min(1.0, self.scroll / self.max_scroll))
+        return 0.0
+
+    def draw_background(self, screen):
+        if self.phase == "boss":
+            self.draw_interior(screen)
+            return
+        sc = self.scroll
+        prog = self.climb_progress()
+        screen.fill(lerp_color((110, 165, 215), (28, 32, 70), prog))
+
+        if prog > 0.4:                                   # stars come out as you climb
+            for sx, sy in STARS:
+                pygame.draw.circle(screen, (230, 230, 255), (sx, int((sy + sc * 0.1) % HEIGHT)), 2)
+        cloud = lerp_color((238, 242, 250), (75, 80, 115), prog)
+        for cx, cy, cw in CLOUDS:
+            y = int((cy + sc * 0.35) % (HEIGHT + 120)) - 60
+            ch = int(cw * 0.3)
+            pygame.draw.ellipse(screen, cloud, (cx, y, cw, ch))
+            pygame.draw.ellipse(screen, cloud, (cx + cw // 5, y - ch // 2, cw // 2, ch))
+            pygame.draw.ellipse(screen, cloud, (cx + cw // 2, y - ch // 3, cw // 2, ch))
+
+        sea_top = int(HORIZON_Y + sc)                    # the ocean
+        if sea_top < HEIGHT:
+            top = max(0, sea_top)
+            pygame.draw.rect(screen, lerp_color((40, 110, 165), (14, 38, 80), prog),
+                             (0, top, WIDTH, HEIGHT - top))
+            streak = lerp_color((90, 160, 205), (40, 70, 120), prog)
+            for k in range(0, (HEIGHT - top) // 18 + 2):
+                y = sea_top + 14 + k * 18
+                if 0 <= y < HEIGHT:
+                    for x in range(0, WIDTH, 70):
+                        dx = int(x + (k * 23 + self.anim_t * 18) % 70)
+                        pygame.draw.line(screen, streak, (dx, y), (dx + 26, y), 2)
+
+        self.draw_lighthouse(screen)
+
+        deck_top = int(GROUND_Y + sc)                    # the wooden docks
+        if deck_top < HEIGHT:
+            for x in (60, 300, 560, 820):
+                pygame.draw.rect(screen, (70, 48, 30), (x, deck_top + 80, 16, HEIGHT))
+            pygame.draw.rect(screen, (125, 88, 52), (0, deck_top, WIDTH, 80))
+            pygame.draw.rect(screen, (165, 125, 85), (0, deck_top, WIDTH, 6))
+            pygame.draw.line(screen, (80, 55, 33), (0, deck_top + 40), (WIDTH, deck_top + 40), 2)
+            for x in range(0, WIDTH, 48):
+                pygame.draw.line(screen, (80, 55, 33), (x, deck_top + 6), (x, deck_top + 80), 2)
+
+    def draw_lighthouse(self, screen):
+        cx = WIDTH // 2
+        sc = self.scroll
+        if self.phase in ("docks", "docks_done"):
+            top_world = LIGHTHOUSE_SHORT_TOP
+        else:
+            e = self.tower_grow * self.tower_grow * (3 - 2 * self.tower_grow)
+            top_world = LIGHTHOUSE_SHORT_TOP + (self.top_world - LIGHTHOUSE_SHORT_TOP) * e
+        base_y = GROUND_Y - 30 + sc
+        top_y = top_world + sc
+        bw, tw, band = 130.0, 84.0, 70
+        total = base_y - top_y
+
+        def width_at(y):
+            return tw + (bw - tw) * (y - top_y) / total
+
+        bands = int(total // band) + 1
+        for k in range(bands):
+            y1 = base_y - k * band
+            y0 = max(top_y, y1 - band)
+            if y1 < 0 or y0 > HEIGHT:
+                continue
+            color = (200, 55, 55) if k % 2 == 0 else (235, 235, 238)
+            w0, w1 = width_at(y0), width_at(y1)
+            pygame.draw.polygon(screen, color, [(cx - w0 / 2, y0), (cx + w0 / 2, y0),
+                                                (cx + w1 / 2, y1), (cx - w1 / 2, y1)])
+            if k % 3 == 1:
+                yc = (y0 + y1) / 2
+                pygame.draw.rect(screen, (40, 50, 80), (cx - 7, yc - 14, 14, 28))
+                pygame.draw.rect(screen, (30, 30, 40), (cx - 7, yc - 14, 14, 28), 2)
+        if base_y > 0:
+            pygame.draw.line(screen, (60, 60, 70), (cx - bw / 2, base_y), (cx - tw / 2, top_y), 3)
+            pygame.draw.line(screen, (60, 60, 70), (cx + bw / 2, base_y), (cx + tw / 2, top_y), 3)
+
+        if top_y > -90:                                  # lamp room, roof and the sweeping beam
+            pygame.draw.rect(screen, (70, 70, 80), (cx - tw / 2 - 16, top_y, tw + 32, 8))
+            pygame.draw.rect(screen, (255, 235, 140), (cx - 24, top_y - 46, 48, 46))
+            pygame.draw.rect(screen, (60, 60, 70), (cx - 24, top_y - 46, 48, 46), 3)
+            pygame.draw.polygon(screen, (190, 50, 50), [(cx - 34, top_y - 46), (cx + 34, top_y - 46),
+                                                        (cx, top_y - 82)])
+            self.beam.fill((0, 0, 0, 0))
+            reach = math.sin(self.anim_t * 0.8) * 800
+            ly = top_y - 23
+            pygame.draw.polygon(self.beam, (255, 240, 150, 55),
+                                [(cx, ly - 6), (cx + reach, ly - 60), (cx + reach, ly + 60), (cx, ly + 6)])
+            screen.blit(self.beam, (0, 0))
+
+        if base_y < HEIGHT + 80:                         # the rocks the lighthouse stands on
+            pygame.draw.rect(screen, (60, 40, 30), (cx - 14, base_y - 44, 28, 44))
+            pygame.draw.ellipse(screen, (90, 90, 98), (cx - 150, base_y - 25, 300, 70))
+            pygame.draw.ellipse(screen, (120, 120, 128), (cx - 110, base_y - 28, 220, 40))
+
+    def draw_interior(self, screen):
+        cx = WIDTH // 2
+        screen.fill((38, 36, 50))
+        for y in range(0, GROUND_Y, 36):
+            pygame.draw.line(screen, (52, 50, 66), (0, y), (WIDTH, y), 2)
+            for x in range(((y // 36) % 2) * 40, WIDTH, 80):
+                pygame.draw.line(screen, (52, 50, 66), (x, y), (x, y + 36), 2)
+        for wx in (90, WIDTH - 230):                      # arched windows onto the night sea
+            night = (18, 26, 62)
+            pygame.draw.rect(screen, night, (wx, 90, 140, 210))
+            pygame.draw.circle(screen, night, (wx + 70, 90), 70)
+            pygame.draw.rect(screen, (18, 40, 80), (wx, 230, 140, 70))
+            for sx, sy in ((20, 60), (100, 30), (60, 110), (120, 150), (30, 170)):
+                pygame.draw.circle(screen, (230, 230, 255), (wx + sx, 60 + sy), 2)
+            pygame.draw.rect(screen, (95, 92, 110), (wx - 6, 90, 152, 216), 6)
+            pygame.draw.circle(screen, (95, 92, 110), (wx + 70, 90), 76, 6, True, True, False, False)
+        pygame.draw.rect(screen, (75, 72, 90), (cx - 18, 190, 36, GROUND_Y - 190))   # lamp pillar
+        pulse = 1 + 0.08 * math.sin(self.anim_t * 3)
+        self.beam.fill((0, 0, 0, 0))
+        pygame.draw.circle(self.beam, (255, 230, 120, 50), (cx, 150), int(130 * pulse))
+        pygame.draw.circle(self.beam, (255, 230, 120, 90), (cx, 150), int(90 * pulse))
+        screen.blit(self.beam, (0, 0))
+        pygame.draw.circle(screen, (255, 240, 170), (cx, 150), 44)
+        pygame.draw.circle(screen, (90, 85, 100), (cx, 150), 44, 5)
+        pygame.draw.line(screen, (90, 85, 100), (cx - 44, 150), (cx + 44, 150), 3)
+        pygame.draw.line(screen, (90, 85, 100), (cx, 106), (cx, 194), 3)
+        pygame.draw.rect(screen, (70, 66, 82), (0, GROUND_Y, WIDTH, HEIGHT - GROUND_Y))
+        pygame.draw.rect(screen, (110, 106, 125), (0, GROUND_Y, WIDTH, 6))
+        for x in range(0, WIDTH, 80):
+            pygame.draw.line(screen, (50, 47, 62), (x, GROUND_Y + 6), (x, HEIGHT), 2)
+
+    def draw_foreground(self, screen):
+        """The rising tide is drawn over the player so you can see yourself wading in it."""
+        if self.phase not in ("climb", "to_boss"):
+            return
+        water_top = self.tide_y + self.scroll
+        if water_top >= HEIGHT:
+            return
+        top = int(max(water_top, -20))
+        h = HEIGHT - top + 12
+        surf = pygame.Surface((WIDTH, h), pygame.SRCALPHA)
+        points = [(0, h)]
+        for x in range(0, WIDTH + 20, 20):
+            points.append((x, 12 + 6 * math.sin(x * 0.03 + self.anim_t * 3)))
+        points.append((WIDTH, h))
+        pygame.draw.polygon(surf, (25, 90, 170, 150), points)
+        pygame.draw.lines(surf, (190, 225, 255), False, points[1:-1], 3)
+        screen.blit(surf, (0, top - 12))
+
+
+def make_level(number, player, progress):
+    if number == 2:
+        return Level2(number, player, progress)
+    return Level(number, player, progress)
 
 
 # ------------------------------------------------------------------
@@ -1322,7 +1853,7 @@ class Game:
         self.player.reset()
         get_papyrus_art()          # load enemy sprites now so there is no pause mid-fight
         get_boss_art(number)
-        self.level = Level(number, self.player, self.progress)
+        self.level = make_level(number, self.player, self.progress)
         self.dialogue = None
         if number in LEVEL_INTRO:
             self.dialogue = Dialogue(LEVEL_INTRO[number], "intro")
@@ -1335,6 +1866,8 @@ class Game:
             self.dialogue = None
             if kind == "boss":
                 self.level.start_boss_fight()
+            elif kind == "phase":
+                self.level.phase_dialogue_done()
 
     def press(self, name):
         p = self.progress
@@ -1435,9 +1968,13 @@ class Game:
             else:
                 self.level.start_boss_fight()
 
+        if self.level.pending_dialogue is not None:
+            self.dialogue = Dialogue(self.level.pending_dialogue, "phase")
+            self.level.pending_dialogue = None
+
         if result == "won":
             n = self.level.number
-            self.last_reward = 20 * n
+            self.last_reward = 20 * n + self.level.earned     # level bonus + coins from this run
             self.progress["coins"] += self.last_reward
             self.progress["unlocked"] = max(self.progress["unlocked"], min(n + 1, NUM_LEVELS))
             write_save(self.progress)
@@ -1488,7 +2025,7 @@ class Game:
                       self.font_small, white, (WIDTH // 2, 355))
         elif s == "complete":
             self.text("LEVEL " + str(self.level.number) + " COMPLETE!", self.font_big, gold, (WIDTH // 2, 150))
-            self.text("+" + str(self.last_reward) + " bonus coins   (total " + str(p["coins"]) + ")",
+            self.text("+" + str(self.last_reward) + " coins earned   (total " + str(p["coins"]) + ")",
                       self.font_mid, white, (WIDTH // 2, 220))
         elif s == "gameover":
             self.text("YOU DIED", self.font_big, (230, 70, 70), (WIDTH // 2, 170))
@@ -1498,13 +2035,10 @@ class Game:
 
     def draw_play(self):
         lv = self.level
-        t = (lv.number - 1) / (FINAL_LEVEL - 1)
-        self.screen.fill(lerp_color((92, 150, 200), (90, 40, 55), t))
-        ground = lerp_color((60, 120, 60), (50, 40, 40), t)
-        pygame.draw.rect(self.screen, ground, (0, GROUND_Y, WIDTH, HEIGHT - GROUND_Y))
-
+        lv.draw_background(self.screen)
         lv.draw(self.screen)
-        self.player.draw(self.screen)
+        self.player.draw(self.screen, lv.scroll)
+        lv.draw_foreground(self.screen)
         self.draw_hud()
         if self.dialogue is not None:
             self.screen.blit(self.dim, (0, 0))
@@ -1529,10 +2063,14 @@ class Game:
         self.text(ammo_text, self.font_small, white, (16 + small.get_width() + 55, 62))
 
         self.text("[H] Heals: " + str(self.progress["heals"]), self.font_small, white, (80, 100))
-        self.text("Coins: " + str(self.progress["coins"]), self.font_small, (255, 215, 0), (70, 125))
+        self.text("Coins: " + str(self.progress["coins"]) + "  (+" + str(lv.earned) + ")",
+                  self.font_small, (255, 215, 0), (100, 125))
 
         self.text("LEVEL " + str(lv.number), self.font_mid, white, (WIDTH // 2, 24))
-        if not lv.boss_spawned:
+        status = lv.status_text()
+        if status is not None:
+            self.text(status, self.font_small, white, (WIDTH // 2, 52))
+        elif not lv.boss_spawned:
             left = lv.total - lv.killed
             self.text("Enemies left: " + str(left), self.font_small, white, (WIDTH // 2, 52))
         elif lv.boss is not None and lv.boss.hp > 0:
@@ -1546,4 +2084,5 @@ class Game:
             self.text("THE PLATFORMS ARE BREAKING!", self.font_mid, (255, 120, 80), (WIDTH // 2, 120))
 
 
-Game().run()
+if __name__ == "__main__":
+    Game().run()
