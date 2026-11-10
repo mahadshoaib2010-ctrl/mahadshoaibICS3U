@@ -15,8 +15,13 @@ SAVE_PATH = os.path.join(BASE_DIR, "save.json")
 WIDTH, HEIGHT = 960, 540
 FPS = 60
 GROUND_Y = HEIGHT - 80
+<<<<<<< HEAD
 NUM_LEVELS = 2       # levels that exist right now: raise this by 1 each time you finish a level (max 5)
 FINAL_LEVEL = 5      # the level that gets the final boss (THE BIG BOSS)
+=======
+NUM_LEVELS = 1       # levels that exist right now: raise this as you add levels
+FINAL_LEVEL = 5      # the level that gets the final boss
+>>>>>>> 3312b386ad451252bd2aa29f0dda2a7f235d23a2
 
 CHAR_SCALE = 0.45
 PISTOL_SCALE = 0.2
@@ -257,6 +262,7 @@ LEVEL_BOSS_TALK = {
     ],
 }
 
+<<<<<<< HEAD
 BOSS_NAMES = ["Rusty", "Crate Captain", "Sly Sam", "Big Bolt", "THE BIG BOSS"]
 
 # Level 2 phase-change dialogue
@@ -266,6 +272,10 @@ L2_TIDE_TALK = [
 ]
 L2_TOP_TALK = [
     ("MISSION", "You made it to the lamp room at the top. Someone is waiting for you inside..."),
+=======
+BOSS_NAMES = [
+    "Rusty", "Crate Captain", "Sly Sam", "Big Bolt", "THE BIG BOSS",
+>>>>>>> 3312b386ad451252bd2aa29f0dda2a7f235d23a2
 ]
 
 
