@@ -1788,7 +1788,7 @@ class Game:
     def __init__(self):
         pygame.init()
         self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
-        pygame.display.set_caption("Adventure Game")
+        pygame.display.set_caption("THE ADVENTURES OF MR.BALLZ")
         self.clock = pygame.time.Clock()
         self.font_big = pygame.font.SysFont(None, 80)
         self.font_mid = pygame.font.SysFont(None, 40)
@@ -2008,7 +2008,7 @@ class Game:
         gold = (255, 215, 0)
         white = (235, 235, 245)
         if s == "menu":
-            self.text("ADVENTURE GAME", self.font_big, gold, (WIDTH // 2, 120))
+            self.text("THE ADVENTURES OF MR.BALLZ", self.font_big, gold, (WIDTH // 2, 120))
             self.text("Coins: " + str(p["coins"]), self.font_small, white, (WIDTH // 2, 180))
             self.text("Move: A/D   Jump: Space   Shoot: F or click   Reload: R   Heal: H",
                       self.font_small, (150, 160, 190), (WIDTH // 2, 480))
