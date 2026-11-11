@@ -35,7 +35,7 @@ HEAL_PRICE = 25
 MAX_HEALS = 9
 
 BASE_DAMAGE = 10
-DAMAGE_PER_LEVEL = 6
+DAMAGE_PER_LEVEL = 3
 MAX_DAMAGE_LEVEL = 10
 
 # Platforms for each level: (left, top, width, height). Levels not listed have none.
@@ -273,7 +273,7 @@ L2_TOP_TALK = [
 # SAVE / LOAD
 # ------------------------------------------------------------------
 def load_save():
-    data = {"unlocked": 1, "coins": 0, "damage_level": 0, "heals": 2}
+    data = {"unlocked": 1, "coins": 0, "damage_level": 0, "heals": 2, "beaten": []}
     try:
         with open(SAVE_PATH) as f:
             data.update(json.load(f))
@@ -1110,6 +1110,7 @@ class Level:
         self.boss_spawned = False
         self.boss_dead = False
         self.boss_name = BOSS_NAMES[number - 1]
+        self.replay = number in progress["beaten"]     # already beaten once: no coins this time
         self.earned = 0                # coins collected this run: only kept if you beat the whole level
         self.scroll = 0.0              # how far the camera has moved up (only used by climbing levels)
         self.pending_dialogue = None   # a level can set this to show a dialogue (e.g. between phases)
@@ -1268,7 +1269,8 @@ class Level:
 
         for e in self.enemies:
             if e.hp <= 0:
-                self.earned += e.coins
+                if not self.replay:
+                    self.earned += e.coins
                 if e.is_boss:
                     self.boss_dead = True
                 else:
@@ -1974,7 +1976,11 @@ class Game:
 
         if result == "won":
             n = self.level.number
-            self.last_reward = 20 * n + self.level.earned     # level bonus + coins from this run
+            if n in self.progress["beaten"]:
+                self.last_reward = 0                           # coins are only paid the first time
+            else:
+                self.last_reward = 20 * n + self.level.earned  # level bonus + coins from this run
+                self.progress["beaten"].append(n)
             self.progress["coins"] += self.last_reward
             self.progress["unlocked"] = max(self.progress["unlocked"], min(n + 1, NUM_LEVELS))
             write_save(self.progress)
@@ -2025,8 +2031,11 @@ class Game:
                       self.font_small, white, (WIDTH // 2, 355))
         elif s == "complete":
             self.text("LEVEL " + str(self.level.number) + " COMPLETE!", self.font_big, gold, (WIDTH // 2, 150))
-            self.text("+" + str(self.last_reward) + " coins earned   (total " + str(p["coins"]) + ")",
-                      self.font_mid, white, (WIDTH // 2, 220))
+            if self.last_reward == 0:
+                msg = "Already beaten before: no coins   (total " + str(p["coins"]) + ")"
+            else:
+                msg = "+" + str(self.last_reward) + " coins earned   (total " + str(p["coins"]) + ")"
+            self.text(msg, self.font_mid, white, (WIDTH // 2, 220))
         elif s == "gameover":
             self.text("YOU DIED", self.font_big, (230, 70, 70), (WIDTH // 2, 170))
         elif s == "victory":
@@ -2063,8 +2072,11 @@ class Game:
         self.text(ammo_text, self.font_small, white, (16 + small.get_width() + 55, 62))
 
         self.text("[H] Heals: " + str(self.progress["heals"]), self.font_small, white, (80, 100))
-        self.text("Coins: " + str(self.progress["coins"]) + "  (+" + str(lv.earned) + ")",
-                  self.font_small, (255, 215, 0), (100, 125))
+        if lv.replay:
+            coin_text = "Coins: " + str(self.progress["coins"]) + "  (already beaten: no coins)"
+        else:
+            coin_text = "Coins: " + str(self.progress["coins"]) + "  (+" + str(lv.earned) + ")"
+        self.text(coin_text, self.font_small, (255, 215, 0), (170, 125))
 
         self.text("LEVEL " + str(lv.number), self.font_mid, white, (WIDTH // 2, 24))
         status = lv.status_text()
