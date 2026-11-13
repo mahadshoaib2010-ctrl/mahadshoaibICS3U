@@ -15,7 +15,7 @@ SAVE_PATH = os.path.join(BASE_DIR, "save.json")
 WIDTH, HEIGHT = 960, 540
 FPS = 60
 GROUND_Y = HEIGHT - 80
-NUM_LEVELS = 2       # levels that exist right now: raise this by 1 each time you finish a level (max 5)
+NUM_LEVELS = 3       # levels that exist right now: raise this by 1 each time you finish a level (max 5)
 FINAL_LEVEL = 5      # the level that gets the final boss (THE BIG BOSS)
 
 CHAR_SCALE = 0.45
@@ -32,11 +32,11 @@ MAX_HP = 100
 HEAL_KEY = pygame.K_h          # change this to rebind heals
 HEAL_AMOUNT = 40
 HEAL_PRICE = 25
-MAX_HEALS = 9
+MAX_HEALS = 10
 
 BASE_DAMAGE = 10
-DAMAGE_PER_LEVEL = 3
-MAX_DAMAGE_LEVEL = 10
+DAMAGE_PER_LEVEL = 4.5
+MAX_DAMAGE_LEVEL = 5
 
 # Platforms for each level: (left, top, width, height). Levels not listed have none.
 PLATFORM_HEIGHT = 14
@@ -106,7 +106,8 @@ ROCK_SPEED = 700
 ROCK_WARNING = 0.9
 BOSS_ATTACKS = ["shoot", "wave", "rocks"]
 BOSS_ATTACK_LISTS = {1: ["wave", "rain"],      # Rusty: shockwave, then falling nuts and bolts
-                     2: ["hook", "poison", "tsunami"]}   # Crate Captain: hook, poison crate, tidal wave
+                     2: ["hook", "poison", "tsunami"],   # Crate Captain: hook, poison crate, tidal wave
+                     3: ["trash", "can", "trash", "deluge"]}   # Sly Sam: trash spray, thrown can, sewage flood
 
 IDLE_SHEET = os.path.join(ASSETS, "idle.jpg")
 WALK_SHEET = os.path.join(ASSETS, "walk_right.jpg")
@@ -173,11 +174,11 @@ ATTACK_FIRE_FRAME = 3                        # the bone is released when this ce
 # ---- Rusty (level 1 boss) sprites ----
 # Save the five sheets in the assets folder as:
 #   rusty_idle  rusty_walk  rusty_jump  rusty_wave  rusty_rain
-BOSS_SPRITES = {1: "rusty", 2: "crate_captain"}          # level number -> sheet name prefix
+BOSS_SPRITES = {1: "rusty", 2: "crate_captain", 3: "sly_sam"}          # level number -> sheet name prefix
 BOSS_SCALE = 0.72                    # size of boss sprites (1.0 = original sheet size)
 BOSS_FEET_PAD = 12                   # empty pixels under the feet in each sheet cell
 BOSS_SIZE_SPRITE = (110, 190)        # boss hitbox size (width, height)
-BOSS_SIZES = {2: (110, 170)}         # per-level override for the hitbox
+BOSS_SIZES = {2: (110, 170), 3: (130, 190)}         # per-level override for the hitbox
 _RUSTY_CELLS = [(30, 80, 220, 327), (271, 80, 232, 327), (520, 80, 232, 327), (774, 80, 220, 327),
                 (30, 429, 298, 315), (362, 429, 299, 315), (695, 429, 298, 315)]
 RUSTY_RECTS = [pygame.Rect(x, y, w, h - BOSS_FEET_PAD) for x, y, w, h in _RUSTY_CELLS]
@@ -213,10 +214,53 @@ TSUNAMI_SPEED = 330
 TSUNAMI_DAMAGE = 22
 TSUNAMI_HEIGHT = 140                 # how tall the damaging part of the wave is (jump it or climb a high ledge)
 
+
+# ---- Level 3: city -> sewer rats -> Sly Sam ----
+# Sprites (transparent strips in the assets folder):
+#   rat_idle / rat_walk / rat_jump / rat_spit / rat_spin
+#   sly_sam_idle / sly_sam_jump / sly_sam_trash / sly_sam_can / sly_sam_deluge   (.png)
+L3_RATS = 15                 # phase 2: giant rats, attacking from both sides
+L3_SPAWN_DELAY = 2.6         # seconds between each pair of rats
+L3_MAX_ALIVE = 6             # most rats alive at once in phase 2
+L3_FIRST_WAVE = 8.0          # phase 3: seconds until the first rat wave
+L3_WAVE_EVERY = 22.0         # ... and then a new wave this often (while Sly Sam is alive)
+L3_WAVE_SIZE = 3             # rats per wave
+RAT_HP = 70                  # base health of a giant rat (it is multiplied up a little per level)
+RAT_SCALE = 0.34             # size of the rat pictures
+RAT_SIZE = (110, 120)        # rat hitbox (width, height)
+RAT_SPIT_SPEED = 340
+RAT_SPIT_DAMAGE = 9
+RAT_SPIN_SPEED = 380         # how fast a rat rolls forward when it spins
+RAT_WHACK_DAMAGE = 14        # tail whack at the end of the spin
+SLY_SAM_HP = 900             # Sly Sam's health
+SLY_SCALE = 0.585            # size of the Sly Sam pictures
+SLY_TRASH_DAMAGE = 10
+SLY_CAN_DAMAGE = 16
+SLUDGE_SPEED = 300           # the sewage flood (his ultimate) runs both ways along the floor
+SLUDGE_HEIGHT = 110
+SLUDGE_DAMAGE = 20
+CITY_MANHOLE_X = 2800        # how far you walk through the city before the manhole
+BOSS_HP = {3: SLY_SAM_HP}
+LEVEL3_ROOM_PLATFORMS = [    # phase 3: platforms in the secret room
+    (60, GROUND_Y - 130, 190, PLATFORM_HEIGHT),
+    (710, GROUND_Y - 130, 190, PLATFORM_HEIGHT),
+    (250, GROUND_Y - 230, 170, PLATFORM_HEIGHT),
+    (540, GROUND_Y - 230, 170, PLATFORM_HEIGHT),
+    (380, GROUND_Y - 330, 200, PLATFORM_HEIGHT),
+]
+RAT_SPIT_SEQUENCE = [(0, 0.30), (1, 0.20), (2, 0.12), (3, 0.20), (4, 0.15), (5, 0.15)]
+RAT_SPIN_SEQUENCE = [(0, 0.25), (1, 0.15), (2, 0.55), (3, 0.15), (4, 0.25), (5, 0.20)]   # rolls at picture 2, tail whack at 4
+TRASH_SEQUENCE = [(0, 0.35), (1, 0.25), (2, 0.18), (3, 0.22), (4, 0.20), (5, 0.25)]
+CAN_SEQUENCE = [(0, 0.35), (1, 0.30), (2, 0.14), (3, 0.22), (4, 0.22), (5, 0.25)]
+DELUGE_SEQUENCE = [(0, 0.45), (1, 0.35), (2, 0.45), (3, 0.45), (4, 0.35)]
+
 ATTACK_SEQUENCES = {"attack": ATTACK_SEQUENCE, "wave": WAVE_SEQUENCE, "rain": RAIN_SEQUENCE,
-                    "hook": HOOK_SEQUENCE, "poison": POISON_SEQUENCE, "tsunami": TSUNAMI_SEQUENCE}
+                    "hook": HOOK_SEQUENCE, "poison": POISON_SEQUENCE, "tsunami": TSUNAMI_SEQUENCE,
+                    "trash": TRASH_SEQUENCE, "can": CAN_SEQUENCE, "deluge": DELUGE_SEQUENCE,
+                    "rat_spit": RAT_SPIT_SEQUENCE, "rat_spin": RAT_SPIN_SEQUENCE}
 # the picture (position in the sequence) when the attack actually goes off
-ATTACK_RELEASE = {"wave": WAVE_RELEASE, "hook": 2, "poison": 2, "tsunami": 2}
+ATTACK_RELEASE = {"wave": WAVE_RELEASE, "hook": 2, "poison": 2, "tsunami": 2,
+                  "trash": 2, "can": 2, "deluge": 2}
 
 ENEMY_TYPES = {
     "grunt": {"hp": 30, "speed": 90, "size": (44, 70), "color": (190, 60, 60),
@@ -231,6 +275,9 @@ ENEMY_TYPES = {
                    "touch": 25, "coins": 300, "range": 300, "delay": 1.2, "shot": 14},
 }
 
+ENEMY_TYPES["rat"] = {"hp": RAT_HP, "speed": 115, "size": RAT_SIZE, "color": (110, 110, 120),
+                      "touch": 10, "coins": 10, "range": 0, "jumps": True}
+
 # Typed dialogue. Each line is (speaker, text). Click the mouse to continue.
 TYPE_SPEED = 40          # characters per second (lower = slower typing)
 LEVEL_INTRO = {
@@ -244,6 +291,10 @@ LEVEL_INTRO = {
         ("MISSION", "More platforms here. Use them for the high ground, but the grunts can follow you up."),
         ("MISSION", "Take down all 20 grunts."),
     ],
+    3: [
+        ("MISSION", "Night in the city. The trail ends at an open manhole, and Sly Sam's gang is hiding somewhere below."),
+        ("MISSION", "Walk right to find the manhole. Watch your step."),
+    ],
 }
 LEVEL_BOSS_TALK = {
     1: [
@@ -255,6 +306,11 @@ LEVEL_BOSS_TALK = {
         ("CRATE CAPTAIN", "You climbed all the way up here for nothing, pal."),
         ("CRATE CAPTAIN", "Every crate in this harbour is mine. And I've got plenty to throw at you!"),
     ],
+    3: [
+        ("SLY SAM", "Well, well... you actually made it past my rats."),
+        ("SLY SAM", "Nobody finds my hideout. And nobody leaves it."),
+        ("SLY SAM", "Rats! Dinner time!"),
+    ],
 }
 
 BOSS_NAMES = ["Rusty", "Crate Captain", "Sly Sam", "Big Bolt", "THE BIG BOSS"]
@@ -263,6 +319,16 @@ BOSS_NAMES = ["Rusty", "Crate Captain", "Sly Sam", "Big Bolt", "THE BIG BOSS"]
 L2_TIDE_TALK = [
     ("MISSION", "That's the last grunt... but the sea is angry. The TIDE is rising fast!"),
     ("MISSION", "Climb the platforms up the lighthouse before the water catches you!"),
+]
+L3_FALL_TALK = [
+    ("MISSION", "You plunge down the manhole and splash into the sewer. Giant rats are closing in from BOTH sides!"),
+]
+L3_RATS_DONE = [
+    ("MISSION", "That's all 15 rats. A hidden door has slid open at the end of the tunnel..."),
+    ("MISSION", "Walk right to find Sly Sam."),
+]
+L3_SECRET_TALK = [
+    ("MISSION", "A secret room deep in the sewer: Sly Sam's hideout. He will keep calling in more rats, so watch both sides."),
 ]
 L2_TOP_TALK = [
     ("MISSION", "You made it to the lamp room at the top. Someone is waiting for you inside..."),
@@ -375,7 +441,7 @@ def frames_to_art(frames):
 def flip_art(art):
     out = {}
     for key, value in art.items():
-        if key in ("bone", "crate"):
+        if key in ("bone", "crate", "orb", "glob", "can_img"):
             out[key] = pygame.transform.flip(value, True, False)
         else:
             out[key] = [(pygame.transform.flip(s, True, False), s.get_width() - ax) for s, ax in value]
@@ -632,13 +698,97 @@ def build_captain_art():
     }
 
 
+def make_glob(color, radius):
+    """A round blob of slime (used for the rat spit and Sly Sam's trash spray)."""
+    surf = pygame.Surface((radius * 2, radius * 2), pygame.SRCALPHA)
+    dark = lerp_color(color, (0, 0, 0), 0.55)
+    pygame.draw.circle(surf, dark, (radius, radius), radius)
+    pygame.draw.circle(surf, color, (radius, radius), max(1, radius - 3))
+    pygame.draw.circle(surf, lerp_color(color, (255, 255, 255), 0.6), (radius - radius // 3, radius - radius // 3),
+                       max(1, radius // 4))
+    return surf
+
+
+def make_trash_can_surface():
+    surf = pygame.Surface((38, 52), pygame.SRCALPHA)
+    pygame.draw.rect(surf, (120, 126, 130), (4, 8, 30, 42))
+    for x in (11, 19, 27):
+        pygame.draw.line(surf, (80, 86, 92), (x, 12), (x, 48), 2)
+    pygame.draw.rect(surf, (40, 44, 50), (4, 8, 30, 42), 2)
+    pygame.draw.rect(surf, (160, 166, 170), (1, 2, 36, 7))
+    pygame.draw.rect(surf, (40, 44, 50), (1, 2, 36, 7), 2)
+    return surf
+
+
+def build_sly_art():
+    strips = {}
+    for name in ("idle", "jump", "trash", "can", "deluge"):
+        path = find_asset("sly_sam_" + name)
+        if path == "":
+            return None
+        count = 5 if name == "deluge" else 6
+        strips[name] = load_strip(path, count, SLY_SCALE)
+    idle = strips["idle"]
+    jump = strips["jump"]
+    return {
+        "idle": idle,
+        "walk": [idle[0], idle[1], idle[3], idle[4]],
+        "jump_up": [jump[2]],
+        "jump_down": [jump[4]],
+        "trash": strips["trash"],
+        "can": strips["can"],
+        "deluge": strips["deluge"],
+        "glob": make_glob((120, 230, 50), 15),
+        "can_img": make_trash_can_surface(),
+    }
+
+
+RAT = {"loaded": False, "right": None, "left": None}
+
+
+def build_rat_art():
+    strips = {}
+    for name in ("idle", "walk", "jump", "spit", "spin"):
+        path = find_asset("rat_" + name)
+        if path == "":
+            return None
+        strips[name] = load_strip(path, 6, RAT_SCALE)
+    return {
+        "idle": strips["idle"],
+        "walk": strips["walk"],
+        "jump_up": [strips["jump"][2]],
+        "jump_down": [strips["jump"][4]],
+        "rat_spit": strips["spit"],
+        "rat_spin": strips["spin"],
+        "orb": make_glob((90, 210, 70), 14),
+    }
+
+
+def get_rat_art():
+    """(right, left) art for the giant sewer rat, or None if its sheets are missing."""
+    if not RAT["loaded"]:
+        RAT["loaded"] = True
+        art = build_rat_art()
+        if art is not None:
+            RAT["right"] = art
+            RAT["left"] = flip_art(art)
+    if RAT["right"] is None:
+        return None
+    return RAT["right"], RAT["left"]
+
+
 def get_boss_art(level_no):
     """(right, left) art for this level's boss, or None if it has no sprite sheets."""
     if level_no not in BOSS_SPRITES:
         return None
     prefix = BOSS_SPRITES[level_no]
     if prefix not in BOSS_ART:
-        art = build_captain_art() if prefix == "crate_captain" else build_boss_art(prefix)
+        if prefix == "crate_captain":
+            art = build_captain_art()
+        elif prefix == "sly_sam":
+            art = build_sly_art()
+        else:
+            art = build_boss_art(prefix)
         BOSS_ART[prefix] = None if art is None else (art, flip_art(art))
     return BOSS_ART[prefix]
 
@@ -827,6 +977,8 @@ class Enemy:
         else:
             scale = 1 + 0.15 * (level_no - 1)
         self.max_hp = cfg["hp"] * scale
+        if kind == "boss" and level_no in BOSS_HP:
+            self.max_hp = float(BOSS_HP[level_no])
         self.hp = self.max_hp
         self.speed = cfg["speed"] * (1 + 0.03 * (level_no - 1))
         self.touch = cfg["touch"] * (1 + 0.1 * (level_no - 1))
@@ -854,6 +1006,7 @@ class Enemy:
 
         papyrus = get_papyrus_art() if kind == "grunt" else None
         boss_art = get_boss_art(level_no) if kind == "boss" else None
+        rat_art = get_rat_art() if kind == "rat" else None
         self.sprite_boss = boss_art is not None
         if papyrus is not None:
             self.art_right, self.art_left = papyrus
@@ -861,6 +1014,9 @@ class Enemy:
         elif boss_art is not None:
             self.art_right, self.art_left = boss_art
             self.size = BOSS_SIZES.get(level_no, BOSS_SIZE_SPRITE)
+        elif rat_art is not None:
+            self.art_right, self.art_left = rat_art
+            self.size = RAT_SIZE
         else:
             paint = color if color is not None else cfg["color"]
             if kind == "boss":
@@ -869,6 +1025,7 @@ class Enemy:
                 names = ["enemy_" + kind]
             self.art_right, self.art_left = get_enemy_art(names, self.size, paint)
         self.can_bow = GRUNTS_SHOOT and kind == "grunt" and "attack" in self.art_right
+        self.can_rat = kind == "rat" and "rat_spit" in self.art_right
 
     @property
     def rect(self):
@@ -905,6 +1062,8 @@ class Enemy:
 
         if self.can_bow:
             self.update_bow(dt, dist, player_y, bullets)
+        if self.can_rat:
+            self.update_rat(dt, dist, player_y, bullets, hazards)
 
         # jumping up to platforms when the player is above
         self.jump_cooldown = max(0.0, self.jump_cooldown - dt)
@@ -969,6 +1128,43 @@ class Enemy:
                 self.attack_name = ""
                 self.shot_timer = self.cfg["delay"] * (0.6 if self.phase_two() else 1.0)
 
+    def update_rat(self, dt, dist, player_y, bullets, hazards):
+        """Giant rat: spits poison from a distance, rolls into a spin and whacks with its tail up close."""
+        if self.attack_time is None:
+            self.attack_cooldown = max(0.0, self.attack_cooldown - dt)
+            ready = (self.attack_cooldown <= 0 and self.on_ground
+                     and abs(player_y - self.y) < 90 and 0 < self.x < WIDTH)
+            if ready and dist < 150:
+                self.attack_name = "rat_spin"
+            elif ready and 200 < dist < 420:
+                self.attack_name = "rat_spit"
+            if self.attack_name != "":
+                self.attack_time = 0.0
+                self.attack_fired = False
+        else:
+            self.attack_time += dt
+            sequence = ATTACK_SEQUENCES[self.attack_name]
+            position = frame_at(sequence, self.attack_time)
+            if self.attack_name == "rat_spit":
+                if position >= 2 and not self.attack_fired:
+                    self.attack_fired = True
+                    art = self.art_right if self.facing == 1 else self.art_left
+                    bullets.append({"x": self.x + self.facing * 60, "y": self.y - self.size[1] * 0.55,
+                                    "vx": self.facing * RAT_SPIT_SPEED, "vy": 0.0,
+                                    "damage": RAT_SPIT_DAMAGE * (1 + 0.1 * (self.level_no - 1)),
+                                    "alive": True, "img": art["orb"]})
+            else:
+                if position == 2:
+                    self.x = max(-60.0, min(WIDTH + 60.0, self.x + self.facing * RAT_SPIN_SPEED * dt))
+                if position >= 4 and not self.attack_fired:
+                    self.attack_fired = True
+                    hazards.append({"type": "melee", "x": self.x, "y": self.y, "dir": self.facing, "reach": 120,
+                                    "dmg": RAT_WHACK_DAMAGE, "t": 0.0, "life": 0.25, "hit": False, "alive": True})
+            if self.attack_time >= sum(d for _, d in sequence):
+                self.attack_time = None
+                self.attack_name = ""
+                self.attack_cooldown = random.uniform(2.5, 4.5)
+
     def update_bow(self, dt, dist, player_y, bullets):
         """Grunt bow attack: aim, draw, release a bone arrow, then wait."""
         if self.attack_time is None:
@@ -1019,6 +1215,32 @@ class Enemy:
                 hazards.append({"type": "crate", "x": x0, "y": y0, "vx": (tx - x0) / flight,
                                 "vy": (GROUND_Y - 16 - y0 - 0.5 * gravity * flight * flight) / flight,
                                 "g": gravity, "rot": 0.0, "img": art["crate"], "alive": True})
+        elif attack == "trash":
+            art = self.art_right if self.facing == 1 else self.art_left
+            count = 3 + (2 if self.phase_two() else 0)
+            y = self.y - self.size[1] * 0.62
+            for i in range(count):
+                spread = (i - (count - 1) / 2) * 110
+                bullets.append({"x": self.x + self.facing * 55, "y": y, "vx": self.facing * 400, "vy": spread,
+                                "damage": SLY_TRASH_DAMAGE * (1 + 0.1 * (self.level_no - 1)),
+                                "alive": True, "img": art["glob"]})
+        elif attack == "can":
+            art = self.art_right if self.facing == 1 else self.art_left
+            targets = [player_x]
+            if self.phase_two():
+                targets.append(player_x + random.choice([-1, 1]) * random.uniform(90, 180))
+            x0 = self.x + self.facing * 45
+            y0 = self.y - self.size[1] * 0.8
+            flight, gravity = 0.9, 1500.0
+            for tx in targets:
+                tx = max(40.0, min(WIDTH - 40.0, tx))
+                hazards.append({"type": "crate", "x": x0, "y": y0, "vx": (tx - x0) / flight,
+                                "vy": (GROUND_Y - 16 - y0 - 0.5 * gravity * flight * flight) / flight,
+                                "g": gravity, "rot": 0.0, "img": art["can_img"], "dmg": SLY_CAN_DAMAGE,
+                                "tint": "green", "alive": True})
+        elif attack == "deluge":
+            for direction in (-1, 1):
+                hazards.append({"type": "sludge", "x": self.x, "dir": direction, "age": 0.0, "alive": True})
         elif attack == "tsunami":
             art = self.art_right if self.facing == 1 else self.art_left
             hazards.append({"type": "tsunami", "x": self.x, "dir": self.facing, "age": 0.0,
@@ -1119,6 +1341,10 @@ class Level:
         """Text under the level number in the HUD, or None for the default."""
         return None
 
+    def banner_text(self):
+        """Big warning text in the HUD (or None)."""
+        return None
+
     def phase_dialogue_done(self):
         """Called when a between-phase dialogue has been clicked through."""
         pass
@@ -1214,10 +1440,30 @@ class Level:
                 r.center = (int(h["x"]), int(h["y"]))
                 hit = r.colliderect(p.rect)
                 if hit:
-                    p.take_damage(POISON_HIT * scale)
+                    p.take_damage(h.get("dmg", POISON_HIT) * scale)
                 if hit or h["y"] >= GROUND_Y - 16:
                     h["alive"] = False
-                    self.hazards.append({"type": "puddle", "x": h["x"], "life": POISON_LIFE, "alive": True})
+                    self.hazards.append({"type": "puddle", "x": h["x"], "life": POISON_LIFE,
+                                         "tint": h.get("tint"), "alive": True})
+            elif h["type"] == "melee":
+                h["t"] += dt
+                reach = h["reach"]
+                left = h["x"] + 15 if h["dir"] == 1 else h["x"] - 15 - reach
+                r = pygame.Rect(int(left), int(h["y"]) - 60, reach, 60)
+                if not h["hit"] and r.colliderect(p.rect):
+                    p.take_damage(h["dmg"] * scale)
+                    h["hit"] = True
+                if h["t"] > h["life"]:
+                    h["alive"] = False
+            elif h["type"] == "sludge":
+                h["age"] += dt
+                h["x"] += h["dir"] * SLUDGE_SPEED * dt
+                r = pygame.Rect(0, 0, 150, SLUDGE_HEIGHT)
+                r.midbottom = (int(h["x"]), GROUND_Y)
+                if r.colliderect(p.rect):
+                    p.take_damage(SLUDGE_DAMAGE * scale)
+                if h["x"] < -200 or h["x"] > WIDTH + 200:
+                    h["alive"] = False
             elif h["type"] == "puddle":
                 h["life"] -= dt
                 r = pygame.Rect(0, 0, 150, 24)
@@ -1336,12 +1582,32 @@ class Level:
                 fade = min(1.0, h["life"] / 0.8)
                 x = int(h["x"])
                 rim = lerp_color((20, 20, 30), (130, 220, 60), fade)
-                fill = lerp_color((20, 20, 30), (110, 40, 160), fade)
+                fill = lerp_color((20, 20, 30), (70, 150, 40) if h.get("tint") == "green" else (110, 40, 160), fade)
                 pygame.draw.ellipse(screen, rim, (x - 78, GROUND_Y - 16, 156, 24))
                 pygame.draw.ellipse(screen, fill, (x - 70, GROUND_Y - 13, 140, 17))
                 for i in range(3):
                     bx = x - 40 + i * 40 + int(8 * math.sin(h["life"] * 4 + i))
                     pygame.draw.circle(screen, rim, (bx, GROUND_Y - 18 - int((h["life"] * 20 + i * 7) % 12)), 3)
+            elif h["type"] == "sludge":
+                x = int(h["x"])
+                d = h["dir"]
+                grow = min(1.0, h["age"] / 0.35)
+                top = int(SLUDGE_HEIGHT * (0.35 + 0.65 * grow))
+                points = [(x - d * 75, GROUND_Y), (x - d * 75, GROUND_Y - 30)]
+                for i in range(1, 7):
+                    t = i / 6.0
+                    px = x - d * 75 + d * 150 * t * 0.85
+                    py = GROUND_Y - 30 - (top - 30) * t - int(6 * math.sin(h["age"] * 9 + i * 1.7))
+                    points.append((px, py))
+                points += [(x + d * 75, GROUND_Y - top * 0.55), (x + d * 75, GROUND_Y)]
+                pygame.draw.polygon(screen, (84, 96, 46), points)
+                pygame.draw.polygon(screen, (160, 180, 80), points, 3)
+                for i in range(4):
+                    bx = x - d * 50 + d * i * 32
+                    by = GROUND_Y - 20 - int((h["age"] * 40 + i * 23) % (top - 25))
+                    pygame.draw.circle(screen, (180, 210, 90), (bx, by), 4, 2)
+            elif h["type"] == "melee":
+                pass        # the tail whack is part of the rat's picture
             elif h["type"] == "tsunami":
                 index = min(len(h["frames"]) - 1, int(h["age"] / 0.15))
                 image, anchor = h["frames"][index]
@@ -1673,7 +1939,423 @@ class Level2(Level):
         screen.blit(surf, (0, top - 12))
 
 
+# ------------------------------------------------------------------
+# LEVEL 3: three phases
+#   city   - walk through the city at night to the open manhole, fall in
+#   rats   - 15 giant sewer rats from both sides (sewer hall)
+#   boss   - walk right into the secret room and fight Sly Sam (rat waves keep coming)
+# ------------------------------------------------------------------
+def make_buildings(rng, end, wmin, wmax, hmin, hmax):
+    out = []
+    x = 0
+    while x < end:
+        w = rng.randint(wmin, wmax)
+        out.append((x, w, rng.randint(hmin, hmax)))
+        x += w + rng.randint(0, 18)
+    return out
+
+
+def draw_poop(screen, x, y, s=1.0):
+    base, dark, light = (112, 70, 34), (66, 38, 16), (160, 108, 60)
+    for w, h, up in ((46, 16, 0), (34, 14, 11), (22, 12, 21), (9, 8, 30)):
+        r = pygame.Rect(int(x - w * s / 2), int(y - up * s - h * s), int(w * s), int(h * s))
+        pygame.draw.ellipse(screen, base, r)
+        pygame.draw.ellipse(screen, dark, r, 2)
+        pygame.draw.ellipse(screen, light, (r.left + r.width // 5, r.top + 2, max(2, r.width // 4), max(2, r.height // 4)))
+
+
+def draw_bag(screen, x, y, s=1.0):
+    body = pygame.Rect(int(x - 19 * s), int(y - 30 * s), int(38 * s), int(30 * s))
+    pygame.draw.ellipse(screen, (34, 46, 36), body)
+    pygame.draw.ellipse(screen, (12, 18, 14), body, 2)
+    pygame.draw.polygon(screen, (34, 46, 36), [(x - 6 * s, y - 27 * s), (x - 11 * s, y - 40 * s),
+                                               (x - 2 * s, y - 31 * s), (x + 8 * s, y - 41 * s),
+                                               (x + 6 * s, y - 27 * s)])
+    pygame.draw.line(screen, (90, 110, 90), (x - 10 * s, y - 22 * s), (x - 5 * s, y - 15 * s), 2)
+
+
+def draw_can_prop(screen, x, y, s=1.0):
+    body = pygame.Rect(int(x - 15 * s), int(y - 44 * s), int(30 * s), int(44 * s))
+    pygame.draw.rect(screen, (112, 118, 122), body)
+    for k in (-8, 0, 8):
+        pygame.draw.line(screen, (74, 80, 86), (x + k * s, y - 40 * s), (x + k * s, y - 4 * s), 2)
+    pygame.draw.rect(screen, (36, 40, 46), body, 2)
+    lid = pygame.Rect(int(x - 17 * s), int(y - 50 * s), int(34 * s), int(7 * s))
+    pygame.draw.rect(screen, (150, 156, 160), lid)
+    pygame.draw.rect(screen, (36, 40, 46), lid, 2)
+
+
+def draw_bottle(screen, x, y, s=1.0):
+    pygame.draw.rect(screen, (70, 150, 120), (int(x - 5 * s), int(y - 22 * s), int(10 * s), int(22 * s)))
+    pygame.draw.rect(screen, (70, 150, 120), (int(x - 2 * s), int(y - 30 * s), int(4 * s), int(9 * s)))
+    pygame.draw.rect(screen, (20, 50, 40), (int(x - 5 * s), int(y - 22 * s), int(10 * s), int(22 * s)), 1)
+
+
+JUNK_DRAW = {"poop": draw_poop, "bag": draw_bag, "can": draw_can_prop, "bottle": draw_bottle}
+HALL_JUNK = [("poop", 90, 1.0), ("bag", 170, 1.1), ("can", 255, 1.0), ("poop", 340, 1.2), ("bottle", 415, 1.0),
+             ("bag", 505, 1.0), ("poop", 600, 0.9), ("can", 690, 1.1), ("bag", 780, 1.2), ("poop", 870, 1.0),
+             ("bottle", 935, 1.0)]
+ROOM_JUNK = [("can", 70, 1.5), ("bag", 130, 1.2), ("poop", 205, 1.2), ("can", 330, 1.3), ("poop", 420, 1.0),
+             ("bag", 540, 1.1), ("can", 625, 1.5), ("poop", 710, 1.3), ("bag", 800, 1.2), ("can", 890, 1.4)]
+
+
+class Level3(Level):
+    def __init__(self, number, player, progress):
+        Level.__init__(self, number, player, progress)
+        self.total = L3_RATS
+        self.spawn_delay = L3_SPAWN_DELAY
+        self.max_alive = L3_MAX_ALIVE
+        self.kinds = ["rat"]
+        self.phase = "city"       # city, falling, to_sewer, rats, rats_done, go_right, to_boss, boss
+        self.scroll_x = 0.0       # how far you have walked through the city
+        self.hole_x = 0.0
+        self.fall_t = 0.0
+        self.door_t = 0.0
+        self.anim_t = 0.0
+        self.wave_timer = L3_FIRST_WAVE
+        self.wave_warning = 0.0
+        self.far = make_buildings(random.Random(11), 3600, 70, 130, 130, 280)
+        self.near = make_buildings(random.Random(12), 3800, 90, 170, 170, 340)
+        self.glow = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        self.fade = pygame.Surface((WIDTH, HEIGHT))
+        self.fade.fill((0, 0, 0))
+
+    # ---------- phase logic ----------
+    def start_boss_fight(self):
+        pass        # the platforms in the secret room do not break
+
+    def status_text(self):
+        if self.phase in ("city", "falling", "to_sewer"):
+            return "PHASE 1 - Find the manhole"
+        if self.phase in ("rats", "rats_done"):
+            return "PHASE 2 - Rats left: " + str(self.total - self.killed)
+        if self.phase in ("go_right", "to_boss"):
+            return "PHASE 3 - Find Sly Sam's hideout"
+        if self.phase == "boss" and self.boss_dead:
+            return "Finish off the rats!"
+        return None
+
+    def banner_text(self):
+        if self.phase == "go_right" and int(self.anim_t * 2) % 2 == 0:
+            return "GO RIGHT  >>>"
+        if self.phase == "city" and self.scroll_x < 400 and int(self.anim_t * 2) % 2 == 0:
+            return "WALK RIGHT  >>>"
+        if self.phase == "boss" and self.wave_warning > 0:
+            return str(L3_WAVE_SIZE) + " MORE RATS INCOMING!"
+        return None
+
+    def phase_dialogue_done(self):
+        if self.phase == "to_sewer":
+            self.begin_rats()
+        elif self.phase == "rats_done":
+            self.phase = "go_right"
+        elif self.phase == "to_boss":
+            self.begin_boss_phase()
+
+    def put_player(self, x):
+        p = self.player
+        p.x = float(x)
+        p.y = float(GROUND_Y)
+        p.vy = 0.0
+        p.on_ground = True
+        p.bullets = []
+
+    def begin_rats(self):
+        self.phase = "rats"
+        self.put_player(WIDTH / 2)
+        self.scroll_x = 0.0
+        self.enemies = []
+        self.enemy_bullets = []
+        self.hazards = []
+        self.spawn_timer = 1.2
+
+    def begin_boss_phase(self):
+        self.phase = "boss"
+        self.platforms = [pygame.Rect(r) for r in LEVEL3_ROOM_PLATFORMS]
+        self.put_player(130)
+        self.enemies = []
+        self.enemy_bullets = []
+        self.hazards = []
+        self.boss = Enemy("boss", WIDTH - 170, self.number, (60, 90, 40))
+        self.boss.facing = -1
+        self.enemies.append(self.boss)
+        self.boss_spawned = True
+        self.talk_pending = True
+        self.wave_timer = L3_FIRST_WAVE
+
+    def spawn_wave(self):
+        for i in range(L3_WAVE_SIZE):
+            if i % 2 == 0:
+                x = -50 - 45 * (i // 2)
+            else:
+                x = WIDTH + 50 + 45 * (i // 2)
+            rat = Enemy("rat", x, self.number)
+            rat.coins = 0                      # wave rats give no coins (no farming)
+            self.enemies.append(rat)
+        self.wave_warning = 2.5
+
+    def spawn_logic(self, dt):
+        if self.phase == "rats":
+            if self.spawned >= self.total:
+                return
+            self.spawn_timer -= dt
+            if self.spawn_timer <= 0 and len(self.enemies) + 2 <= self.max_alive:
+                for side in (-50, WIDTH + 50):          # one from each side at the same moment
+                    if self.spawned < self.total:
+                        self.enemies.append(Enemy("rat", side, self.number))
+                        self.spawned += 1
+                self.spawn_timer = self.spawn_delay
+        elif self.phase == "boss" and not self.boss_dead:
+            self.wave_warning = max(0.0, self.wave_warning - dt)
+            self.wave_timer -= dt
+            if self.wave_timer <= 0:
+                self.spawn_wave()
+                self.wave_timer = L3_WAVE_EVERY
+
+    def update(self, dt):
+        self.anim_t += dt
+        ph = self.phase
+        if ph == "city":
+            return self.update_city()
+        if ph == "falling":
+            return self.update_fall(dt)
+        if ph in ("rats", "go_right", "boss"):
+            result = Level.update(self, dt)
+            if ph == "rats":
+                if result == "" and self.spawned >= self.total and len(self.enemies) == 0:
+                    self.phase = "rats_done"
+                    self.pending_dialogue = L3_RATS_DONE
+            elif ph == "go_right":
+                self.door_t = min(1.0, self.door_t + dt)
+                if self.player.x >= WIDTH - 50:
+                    self.phase = "to_boss"
+                    self.pending_dialogue = L3_SECRET_TALK
+            elif result == "won" and len(self.enemies) > 0:
+                result = ""                    # Sly Sam is down, but the rats must go too
+            return result
+        if ph == "rats_done":
+            self.door_t = min(1.0, self.door_t + dt)
+        return "lost" if self.player.hp <= 0 else ""
+
+    def update_city(self):
+        p = self.player
+        max_scroll = CITY_MANHOLE_X - 640
+        if p.x > 520 and self.scroll_x < max_scroll:
+            d = min(p.x - 520, max_scroll - self.scroll_x)
+            self.scroll_x += d
+            p.x -= d
+        elif p.x < 300 and self.scroll_x > 0:
+            d = min(300 - p.x, self.scroll_x)
+            self.scroll_x -= d
+            p.x += d
+        if p.x + self.scroll_x >= CITY_MANHOLE_X:
+            self.phase = "falling"
+            self.fall_t = 0.0
+            self.hole_x = CITY_MANHOLE_X - self.scroll_x
+        return ""
+
+    def update_fall(self, dt):
+        p = self.player
+        self.fall_t += dt
+        p.x = self.hole_x
+        p.vy = 0.0
+        p.on_ground = False
+        p.y = GROUND_Y + 0.5 * 1800 * self.fall_t * self.fall_t
+        if self.fall_t >= 1.2:
+            self.phase = "to_sewer"
+            self.pending_dialogue = L3_FALL_TALK
+        return ""
+
+    # ---------- drawing ----------
+    def draw_platforms(self, screen):
+        for p in self.platforms:
+            pygame.draw.rect(screen, (70, 80, 70), p)
+            pygame.draw.rect(screen, (125, 145, 110), (p.left, p.top, p.width, 4))
+            pygame.draw.rect(screen, (30, 40, 30), p, 2)
+            for x in range(p.left + 12, p.right - 6, 24):
+                pygame.draw.line(screen, (40, 52, 40), (x, p.top + 4), (x, p.bottom - 2), 2)
+
+    def draw_background(self, screen):
+        if self.phase in ("city", "falling"):
+            self.draw_city(screen)
+        elif self.phase == "to_sewer":
+            screen.fill((0, 0, 0))
+        elif self.phase == "boss":
+            self.draw_secret_room(screen)
+        else:
+            self.draw_sewer_hall(screen)
+
+    def draw_city(self, screen):
+        sx = self.scroll_x
+        bands = 14
+        for i in range(bands):
+            c = lerp_color((6, 8, 24), (52, 36, 84), i / (bands - 1))
+            top = i * GROUND_Y // bands
+            pygame.draw.rect(screen, c, (0, top, WIDTH, GROUND_Y // bands + 2))
+        for k, (stx, sty) in enumerate(STARS):
+            pygame.draw.circle(screen, (225, 225, 250), (int((stx * 1.1 - sx * 0.03) % WIDTH), sty + 10), 1 + k % 2)
+        mx = int(770 - sx * 0.02)
+        pygame.draw.circle(screen, (238, 236, 205), (mx, 90), 34)
+        pygame.draw.circle(screen, (10, 12, 32), (mx + 14, 82), 30)       # crescent
+        for bx, bw, bh in self.far:                                         # far skyline
+            x = int(bx - sx * 0.25)
+            if -bw < x < WIDTH:
+                pygame.draw.rect(screen, (16, 18, 42), (x, GROUND_Y - bh, bw, bh))
+                for wy in range(GROUND_Y - bh + 14, GROUND_Y - 10, 28):
+                    for wx in range(x + 8, x + bw - 10, 20):
+                        if (bx // 5 + wx // 20 + wy // 28) % 5 == 0:
+                            pygame.draw.rect(screen, (150, 130, 80), (wx, wy, 6, 9))
+        for bx, bw, bh in self.near:                                        # near buildings
+            x = int(bx - sx * 0.55)
+            if -bw < x < WIDTH:
+                pygame.draw.rect(screen, (26, 28, 60), (x, GROUND_Y - bh, bw, bh))
+                pygame.draw.rect(screen, (14, 16, 38), (x, GROUND_Y - bh, bw, bh), 2)
+                for wy in range(GROUND_Y - bh + 16, GROUND_Y - 30, 30):
+                    for wx in range(x + 10, x + bw - 14, 24):
+                        lit = (bx // 7 + wx // 24 + wy // 30) % 4 == 0
+                        pygame.draw.rect(screen, (245, 215, 115) if lit else (14, 16, 36), (wx, wy, 11, 15))
+        road = (40, 40, 50)                                                 # street
+        pygame.draw.rect(screen, road, (0, GROUND_Y, WIDTH, HEIGHT - GROUND_Y))
+        pygame.draw.rect(screen, (98, 98, 112), (0, GROUND_Y, WIDTH, 6))
+        for k in range(-1, WIDTH // 120 + 2):
+            pygame.draw.rect(screen, (190, 170, 60), (int(k * 120 - sx % 120), GROUND_Y + 40, 60, 6))
+        self.glow.fill((0, 0, 0, 0))
+        first = int(sx // 380)
+        for k in range(first, first + WIDTH // 380 + 3):                  # street lamps
+            x = int(k * 380 + 150 - sx)
+            pygame.draw.rect(screen, (52, 52, 64), (x - 3, GROUND_Y - 175, 6, 175))
+            pygame.draw.rect(screen, (52, 52, 64), (x, GROUND_Y - 177, 26, 5))
+            pygame.draw.ellipse(screen, (255, 240, 170), (x + 14, GROUND_Y - 175, 24, 10))
+            pygame.draw.polygon(self.glow, (255, 230, 140, 34), [(x + 24, GROUND_Y - 170), (x - 50, GROUND_Y),
+                                                                  (x + 100, GROUND_Y)])
+            pygame.draw.circle(self.glow, (255, 230, 140, 40), (x + 26, GROUND_Y - 170), 46)
+        hx = int(CITY_MANHOLE_X - sx)
+        if self.phase == "falling":
+            hx = int(self.hole_x)
+            pygame.draw.rect(screen, (6, 6, 10), (hx - 30, GROUND_Y, 60, HEIGHT - GROUND_Y))
+        elif -80 < hx < WIDTH + 80:                                         # the manhole
+            pygame.draw.ellipse(screen, (112, 112, 124), (hx - 38, GROUND_Y - 6, 76, 14))
+            pygame.draw.ellipse(screen, (8, 8, 12), (hx - 30, GROUND_Y - 4, 60, 9))
+            for i in range(4):                                              # steam
+                t = (self.anim_t * 0.6 + i * 0.25) % 1.0
+                pygame.draw.circle(self.glow, (200, 210, 220, int(90 * (1 - t))),
+                                   (hx + int(10 * math.sin(i * 2 + self.anim_t)), int(GROUND_Y - 10 - 70 * t)),
+                                   int(10 + 14 * t))
+            bounce = int(5 * math.sin(self.anim_t * 4))
+            pygame.draw.polygon(screen, (255, 210, 40), [(hx - 14, GROUND_Y - 64 + bounce),
+                                                         (hx + 14, GROUND_Y - 64 + bounce),
+                                                         (hx, GROUND_Y - 42 + bounce)])
+        screen.blit(self.glow, (0, 0))
+
+    def draw_sewer_hall(self, screen):
+        screen.fill((20, 28, 26))
+        for y in range(0, GROUND_Y, 30):
+            pygame.draw.line(screen, (32, 44, 40), (0, y), (WIDTH, y), 2)
+            for x in range((y // 30 % 2) * 30, WIDTH, 60):
+                pygame.draw.line(screen, (32, 44, 40), (x, y), (x, y + 30), 2)
+        for ax in range(80, WIDTH, 320):                                    # tunnel arches
+            pygame.draw.rect(screen, (10, 16, 14), (ax - 70, 150, 140, GROUND_Y - 150))
+            pygame.draw.circle(screen, (10, 16, 14), (ax, 150), 70)
+            pygame.draw.rect(screen, (50, 64, 56), (ax - 76, 150, 152, GROUND_Y - 150), 5)
+            pygame.draw.circle(screen, (50, 64, 56), (ax, 150), 76, 5, True, True, False, False)
+        for py in (36, 66):                                                  # pipes with drips
+            pygame.draw.rect(screen, (62, 80, 66), (0, py, WIDTH, 16))
+            pygame.draw.line(screen, (110, 135, 110), (0, py + 3), (WIDTH, py + 3), 2)
+            for jx in range(60, WIDTH, 160):
+                pygame.draw.rect(screen, (40, 54, 44), (jx, py - 3, 12, 22))
+        for jx in range(120, WIDTH, 160):
+            t = (self.anim_t * 0.9 + jx * 0.013) % 1.0
+            pygame.draw.circle(screen, (110, 220, 70), (jx, int(84 + (GROUND_Y - 100) * t * t)), 3)
+        for mx in range(30, WIDTH, 97):                                      # hanging slime
+            pygame.draw.line(screen, (60, 140, 50), (mx, 82), (mx, 82 + 14 + (mx * 7) % 40), 3)
+        for lx in (200, 520, 840):                                           # lamps
+            pygame.draw.rect(screen, (30, 36, 32), (lx - 10, 120, 20, 10))
+            pygame.draw.circle(screen, (200, 230, 120), (lx, 136), 7)
+        self.draw_door(screen)
+        self.draw_liquid(screen)
+        for kind, x, sc in HALL_JUNK:
+            JUNK_DRAW[kind](screen, x, GROUND_Y - 4, sc)
+
+    def draw_door(self, screen):
+        """The hidden door at the right end of the sewer hall."""
+        x = WIDTH - 64
+        pygame.draw.rect(screen, (8, 14, 10), (x, GROUND_Y - 170, 64, 170))
+        if self.door_t > 0:
+            pygame.draw.rect(screen, (60, 200, 60), (x + 10, GROUND_Y - 160, 44, 150), 3)
+        lift = int(165 * self.door_t)
+        slab = pygame.Rect(x, GROUND_Y - 170 - lift, 64, 170)
+        if lift < 165:
+            pygame.draw.rect(screen, (46, 60, 52), slab)
+            pygame.draw.rect(screen, (24, 34, 28), slab, 3)
+            for yy in range(slab.top + 20, slab.bottom, 30):
+                pygame.draw.line(screen, (30, 42, 34), (slab.left, yy), (slab.right, yy), 2)
+
+    def draw_liquid(self, screen):
+        top = GROUND_Y - 8
+        pygame.draw.rect(screen, (46, 108, 40), (0, top, WIDTH, HEIGHT - top))
+        pygame.draw.rect(screen, (30, 78, 28), (0, top + 30, WIDTH, HEIGHT - top - 30))
+        points = [(0, HEIGHT)]
+        for x in range(0, WIDTH + 20, 20):
+            points.append((x, top + 3 * math.sin(x * 0.05 + self.anim_t * 2.2)))
+        points.append((WIDTH, HEIGHT))
+        pygame.draw.polygon(screen, (60, 135, 50), points)
+        pygame.draw.lines(screen, (150, 230, 90), False, points[1:-1], 2)
+        for i in range(9):
+            bx = (i * 113 + int(self.anim_t * 14)) % WIDTH
+            pygame.draw.circle(screen, (140, 220, 90), (bx, top + 12 + (i * 17) % 40), 3, 1)
+
+    def draw_secret_room(self, screen):
+        cx = WIDTH // 2
+        screen.fill((14, 20, 22))
+        for y in range(0, GROUND_Y, 32):
+            pygame.draw.line(screen, (26, 38, 40), (0, y), (WIDTH, y), 2)
+            for x in range((y // 32 % 2) * 36, WIDTH, 72):
+                pygame.draw.line(screen, (26, 38, 40), (x, y), (x, y + 32), 2)
+        pygame.draw.rect(screen, (46, 64, 56), (0, 44, WIDTH, 22))                  # big pipe
+        pygame.draw.line(screen, (100, 130, 105), (0, 49), (WIDTH, 49), 3)
+        for px in (140, 480, 820):
+            pygame.draw.rect(screen, (30, 44, 38), (px, 38, 16, 34))
+            t = (self.anim_t * 0.7 + px * 0.01) % 1.0
+            pygame.draw.rect(screen, (110, 230, 70), (px + 6, 72, 4, int(10 + (GROUND_Y - 90) * t)))
+        for chx in (180, 780):                                                       # hanging chains
+            for k in range(8):
+                pygame.draw.ellipse(screen, (80, 88, 90), (chx - 5, 70 + k * 16, 10, 16), 2)
+        self.glow.fill((0, 0, 0, 0))
+        pulse = 1 + 0.1 * math.sin(self.anim_t * 2.5)
+        for gx in (150, 480, 810):                                                   # glowing slime pools
+            pygame.draw.circle(self.glow, (90, 255, 70, 40), (gx, GROUND_Y - 6), int(110 * pulse))
+        pygame.draw.circle(self.glow, (90, 255, 70, 30), (cx, 120), int(150 * pulse))
+        screen.blit(self.glow, (0, 0))
+        pygame.draw.rect(screen, (50, 58, 60), (0, GROUND_Y, WIDTH, HEIGHT - GROUND_Y))   # stone floor
+        pygame.draw.rect(screen, (92, 104, 100), (0, GROUND_Y, WIDTH, 6))
+        for x in range(0, WIDTH, 90):
+            pygame.draw.line(screen, (34, 40, 42), (x, GROUND_Y + 6), (x, HEIGHT), 2)
+        for gx in (150, 480, 810):
+            pygame.draw.ellipse(screen, (60, 190, 50), (gx - 70, GROUND_Y - 6, 140, 16))
+            pygame.draw.ellipse(screen, (140, 255, 100), (gx - 50, GROUND_Y - 3, 100, 8))
+        for kind, x, sc in ROOM_JUNK:
+            JUNK_DRAW[kind](screen, x, GROUND_Y - 2, sc)
+
+    def draw_foreground(self, screen):
+        if self.phase == "falling":
+            hx = int(self.hole_x)
+            pygame.draw.rect(screen, (40, 40, 50), (0, GROUND_Y, hx - 30, HEIGHT - GROUND_Y))
+            pygame.draw.rect(screen, (40, 40, 50), (hx + 30, GROUND_Y, WIDTH - hx - 30, HEIGHT - GROUND_Y))
+            pygame.draw.rect(screen, (98, 98, 112), (0, GROUND_Y, hx - 30, 6))
+            pygame.draw.rect(screen, (98, 98, 112), (hx + 30, GROUND_Y, WIDTH - hx - 30, 6))
+            alpha = int(255 * max(0.0, min(1.0, (self.fall_t - 0.6) / 0.6)))
+            if alpha > 0:
+                self.fade.set_alpha(alpha)
+                screen.blit(self.fade, (0, 0))
+        elif self.phase in ("rats", "rats_done", "go_right", "to_boss"):
+            band = pygame.Surface((WIDTH, 30), pygame.SRCALPHA)           # the sewage is up to your feet
+            band.fill((70, 160, 50, 115))
+            screen.blit(band, (0, GROUND_Y - 12))
+
+
 def make_level(number, player, progress):
+    if number == 3:
+        return Level3(number, player, progress)
     if number == 2:
         return Level2(number, player, progress)
     return Level(number, player, progress)
@@ -1790,7 +2472,7 @@ class Game:
     def __init__(self):
         pygame.init()
         self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
-        pygame.display.set_caption("THE ADVENTURES OF MR.BALLZ")
+        pygame.display.set_caption("Adventure Game")
         self.clock = pygame.time.Clock()
         self.font_big = pygame.font.SysFont(None, 80)
         self.font_mid = pygame.font.SysFont(None, 40)
@@ -1855,6 +2537,7 @@ class Game:
         self.player.reset()
         get_papyrus_art()          # load enemy sprites now so there is no pause mid-fight
         get_boss_art(number)
+        get_rat_art()
         self.level = make_level(number, self.player, self.progress)
         self.dialogue = None
         if number in LEVEL_INTRO:
@@ -2014,7 +2697,7 @@ class Game:
         gold = (255, 215, 0)
         white = (235, 235, 245)
         if s == "menu":
-            self.text("THE ADVENTURES OF MR.BALLZ", self.font_big, gold, (WIDTH // 2, 120))
+            self.text("ADVENTURE GAME", self.font_big, gold, (WIDTH // 2, 120))
             self.text("Coins: " + str(p["coins"]), self.font_small, white, (WIDTH // 2, 180))
             self.text("Move: A/D   Jump: Space   Shoot: F or click   Reload: R   Heal: H",
                       self.font_small, (150, 160, 190), (WIDTH // 2, 480))
@@ -2094,6 +2777,9 @@ class Game:
             self.text(lv.boss_name, self.font_small, white, (WIDTH // 2, 80))
         if lv.breaking:
             self.text("THE PLATFORMS ARE BREAKING!", self.font_mid, (255, 120, 80), (WIDTH // 2, 120))
+        banner = lv.banner_text()
+        if banner is not None:
+            self.text(banner, self.font_mid, (255, 120, 80), (WIDTH // 2, 120))
 
 
 if __name__ == "__main__":
