@@ -11,12 +11,88 @@ import pygame
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ASSETS = os.path.join(BASE_DIR, "assets")
 SAVE_PATH = os.path.join(BASE_DIR, "save.json")
+SOUND_DIR = os.path.join(BASE_DIR, "sounds")      # put the sounds folder next to this file
+
+# ---- sound settings ----
+MUSIC_VOLUME = 0.5             # 0.0 to 1.0 (background music)
+SFX_VOLUME = 0.8               # 0.0 to 1.0 (shots, reloads, sword, jump, level beat)
+MUSIC_FILES = {                # background music: name -> file in the sounds folder
+    "shop": "shop.mp3",                       # while you are in the shop
+    "grunts": "grunt_phase.mp3",              # every phase that has grunts (not boss fights)
+    "rusty": "rusty_fight.mp3",               # level 1 boss
+    "water": "water_rising.mp3",              # level 2 phase 2 (tide climb)
+    "crate_captain": "crate_captain_fight.mp3",
+    "rats": "rat_phase.mp3",                  # level 3 phase 2 (the rats)
+    "sly_sam": "sly_sam_fight.mp3",
+    "big_bolt": "big_bolt_fight.mp3",
+    "buddy": "buddy_fight.mp3",
+}
+SFX_FILES = {                  # sound effects: name -> file in the sounds folder
+    "shot": "pistol_shot.mp3",
+    "reload": "pistol_reload.mp3",
+    "sword": "sword_swing.mp3",
+    "jump": "jump.mp3",
+    "beat": "level_beat.mp3",
+}
+MUSIC_RULES = {                # which music plays in which phase (levels 2 to 5); a phase that is not listed has no music
+    2: {"docks": "grunts", "climb": "water", "boss": "crate_captain"},
+    3: {"rats": "rats", "boss": "sly_sam"},
+    4: {"grunts": "grunts", "boss": "big_bolt"},
+    5: {"boss": "buddy"},
+}
+AUDIO = {"ok": False, "sfx": {}, "music": None}
+
+
+def init_audio():
+    """Start the mixer and load the sound effects. If anything fails the game just runs without sound."""
+    try:
+        if not pygame.mixer.get_init():
+            pygame.mixer.init()
+        pygame.mixer.set_num_channels(32)          # plenty of channels so fast clicking can overlap the full sound
+    except pygame.error as err:
+        print("Sound is off (mixer could not start):", err)
+        return
+    AUDIO["ok"] = True
+    for name, filename in SFX_FILES.items():
+        path = os.path.join(SOUND_DIR, filename)
+        try:
+            sound = pygame.mixer.Sound(path)
+            sound.set_volume(SFX_VOLUME)
+            AUDIO["sfx"][name] = sound
+        except (pygame.error, FileNotFoundError, OSError) as err:
+            print("Missing or unreadable sound:", path, err)
+
+
+# WHY: SFX go on their own Sound channels (not the music stream) so a shot, jump or swing never cuts off the background track, and rapid clicks simply stack up.
+def play_sfx(name):
+    """Play a sound effect on a free channel. It never touches the background music, and every call plays the whole sound."""
+    sound = AUDIO["sfx"].get(name)
+    if sound is not None:
+        sound.play()
+
+
+# WHY: Music is only restarted when the track actually changes; reloading every frame would make it stutter and restart from zero.
+def set_music(key):
+    """Switch the background music (None = silence). Does nothing if that music is already playing."""
+    if not AUDIO["ok"] or key == AUDIO["music"]:
+        return
+    AUDIO["music"] = key
+    try:
+        if key is None:
+            pygame.mixer.music.stop()
+            return
+        pygame.mixer.music.load(os.path.join(SOUND_DIR, MUSIC_FILES[key]))
+        pygame.mixer.music.set_volume(MUSIC_VOLUME)
+        pygame.mixer.music.play(-1)                # -1 = loop until the music changes
+    except (pygame.error, FileNotFoundError, OSError) as err:
+        print("Could not play music", key, err)
+
 
 WIDTH, HEIGHT = 960, 540
 FPS = 60
 GROUND_Y = HEIGHT - 80
-NUM_LEVELS = 3       # levels that exist right now: raise this by 1 each time you finish a level (max 5)
-FINAL_LEVEL = 5      # the level that gets the final boss (THE BIG BOSS)
+NUM_LEVELS = 5       # levels that exist right now: raise this by 1 each time you finish a level (max 5)
+FINAL_LEVEL = 5      # the level that gets the final boss (BUDDY)
 
 CHAR_SCALE = 0.45
 PISTOL_SCALE = 0.2
@@ -27,7 +103,18 @@ GRAVITY = 2200
 JUMP_SPEED = -850
 BULLET_SPEED = 900
 MAG_SIZE = 12
+MAG_UPGRADE_UNLOCK = 2         # the extended magazine appears in the shop once this level has been beaten
+MAG_UPGRADE_PRICES = [60, 90, 120, 150, 180]  # price of each purchase (its length = how many times you can buy it)
+MAG_UPGRADE_BULLETS = 5        # extra bullets per purchase
+
+
+# WHY: Also true if level 3 is unlocked: older save files have no 'beaten' list, and those players must still see the shop item they already earned.
+def mag_unlocked(progress):
+    """The shop sells the extended magazine once level 2 is beaten (or level 3 is already unlocked)."""
+    return MAG_UPGRADE_UNLOCK in progress["beaten"] or progress["unlocked"] > MAG_UPGRADE_UNLOCK
 MAX_HP = 100
+LEVEL5_HEALS = 10              # heals you get in level 5 regardless of what you bought
+LEVEL5_HP = 200                # your health in level 5 only
 
 HEAL_KEY = pygame.K_h          # change this to rebind heals
 HEAL_AMOUNT = 40
@@ -35,7 +122,7 @@ HEAL_PRICE = 25
 MAX_HEALS = 10
 
 BASE_DAMAGE = 10
-DAMAGE_PER_LEVEL = 4.5
+DAMAGE_PER_LEVEL = 5
 MAX_DAMAGE_LEVEL = 5
 
 # Platforms for each level: (left, top, width, height). Levels not listed have none.
@@ -107,7 +194,9 @@ ROCK_WARNING = 0.9
 BOSS_ATTACKS = ["shoot", "wave", "rocks"]
 BOSS_ATTACK_LISTS = {1: ["wave", "rain"],      # Rusty: shockwave, then falling nuts and bolts
                      2: ["hook", "poison", "tsunami"],   # Crate Captain: hook, poison crate, tidal wave
-                     3: ["trash", "can", "trash", "deluge"]}   # Sly Sam: trash spray, thrown can, sewage flood
+                     3: ["trash", "can", "trash", "deluge"],
+                     5: ["slash", "dash", "throw", "boulders", "slash", "throw"],      # Buddy
+                     4: ["bolts", "cars", "bolts", "cars"]}      # Big Bolt: rapid bolts, thrown cars   # Sly Sam: trash spray, thrown can, sewage flood
 
 IDLE_SHEET = os.path.join(ASSETS, "idle.jpg")
 WALK_SHEET = os.path.join(ASSETS, "walk_right.jpg")
@@ -174,11 +263,11 @@ ATTACK_FIRE_FRAME = 3                        # the bone is released when this ce
 # ---- Rusty (level 1 boss) sprites ----
 # Save the five sheets in the assets folder as:
 #   rusty_idle  rusty_walk  rusty_jump  rusty_wave  rusty_rain
-BOSS_SPRITES = {1: "rusty", 2: "crate_captain", 3: "sly_sam"}          # level number -> sheet name prefix
+BOSS_SPRITES = {1: "rusty", 2: "crate_captain", 3: "sly_sam", 4: "big_bolt", 5: "buddy"}          # level number -> sheet name prefix
 BOSS_SCALE = 0.72                    # size of boss sprites (1.0 = original sheet size)
 BOSS_FEET_PAD = 12                   # empty pixels under the feet in each sheet cell
 BOSS_SIZE_SPRITE = (110, 190)        # boss hitbox size (width, height)
-BOSS_SIZES = {2: (110, 170), 3: (130, 190)}         # per-level override for the hitbox
+BOSS_SIZES = {2: (110, 170), 3: (130, 190), 4: (140, 195), 5: (96, 210)}         # per-level override for the hitbox
 _RUSTY_CELLS = [(30, 80, 220, 327), (271, 80, 232, 327), (520, 80, 232, 327), (774, 80, 220, 327),
                 (30, 429, 298, 315), (362, 429, 299, 315), (695, 429, 298, 315)]
 RUSTY_RECTS = [pygame.Rect(x, y, w, h - BOSS_FEET_PAD) for x, y, w, h in _RUSTY_CELLS]
@@ -241,6 +330,75 @@ SLUDGE_HEIGHT = 110
 SLUDGE_DAMAGE = 20
 CITY_MANHOLE_X = 2800        # how far you walk through the city before the manhole
 BOSS_HP = {3: SLY_SAM_HP}
+
+# ---- Level 4: junkyard, car fort, Big Bolt ----
+L4_GRUNTS = 15               # phase 2: how many power grunts overrun you
+L4_SPAWN_DELAY = 2.2         # seconds between pairs of power grunts
+L4_MAX_ALIVE = 6             # most power grunts on screen at once in phase 2
+POWER_GRUNT_HP = 75          # base health (a normal grunt has 30)
+POWER_GRUNT_SPEED = 112
+POWER_GRUNT_TOUCH = 14       # damage when one touches you (a normal grunt does 10)
+POWER_GRUNT_SHOT_MULT = 1.8  # their bone arrows hurt this much more than a normal grunt's
+BIG_BOLT_HP = 1100           # Big Bolt's health
+BOSS_HP[4] = BIG_BOLT_HP
+
+# ---- Level 5: sword duel with Buddy ----
+BUDDY_HP = 3500              # Buddy's health: by far the most of any boss
+BUDDY_SCALE = 0.72           # size of the Buddy pictures (buddy_idle.png, buddy_walk.png ...)
+BOOMERANG_DAMAGE = 16        # Buddy's thrown sword
+BUDDY_SPEED = 140
+BUDDY_RANGE = 170            # he walks up to about this far from you (a sword fight is close)
+BUDDY_TOUCH = 16             # touching him hurts
+BUDDY_DELAY = 1.7            # seconds between his attacks (he is faster once powered up)
+SLASH_DAMAGE = 14            # Buddy's energy crescent
+DASH_SPEED = 620
+L5_SUMMON_FIRST = 9.0        # seconds before Buddy's first summon
+L5_SUMMON_EVERY = 20.0       # he calls power grunts this often until he is at half health...
+L5_SUMMON_COUNT = 2          # ...this many at a time
+L5_POWER_DELAY = 2.5         # seconds the "powered up" text is locked before you can click it away
+SWORD_SCALE = 0.42           # size of the golden sword pictures
+SWORD_PIVOT = (0.1512, 0.5072)   # where the glove is in each sword picture (fraction of its size)
+SWORD_HAND = (20, -62)       # where the glove sits on the player (from the feet)
+SWORD_REACH = 150            # how far in front of you a swing hits
+SWORD_MULT = 2.2             # sword damage = your damage upgrade x this
+SPECIAL_HITS = 10            # sword hits needed to charge the special attack (press T)
+SPECIAL_MULT = 7.0           # special damage = your damage x this (it goes through everything)
+SPECIAL_SPEED = 720
+SWORD_SWING = [(0, 0.06), (1, 0.11), (2, 0.11), (3, 0.06)]       # picture in sword_swing.png, seconds (hits on pictures 1 and 2)
+SWORD_SPECIAL = [(0, 0.12), (1, 0.14), (2, 0.10), (3, 0.12), (4, 0.28), (5, 0.12)]
+SWORD_SPECIAL_RELEASE = 3    # the crescent flies when this picture shows
+BUDDY_SLASH_SEQUENCE = [(0, 0.42), (1, 0.18), (2, 0.16), (3, 0.28)]
+BUDDY_DASH_SEQUENCE = [(0, 0.50), (1, 0.12), (2, 0.40), (3, 0.30)]
+BUDDY_THROW_SEQUENCE = [(0, 0.40), (1, 0.18), (2, 0.90), (3, 0.30), (4, 0.30)]   # sword leaves his hand on picture 2
+BUDDY_BOULDER_SEQUENCE = [(0, 0.45), (1, 0.30), (2, 0.30), (3, 0.35)]
+LEVEL5_PLATFORMS = [
+    (110, GROUND_Y - 125, 190, PLATFORM_HEIGHT),
+    (385, GROUND_Y - 225, 190, PLATFORM_HEIGHT),
+    (660, GROUND_Y - 125, 190, PLATFORM_HEIGHT),
+]
+PLAYER_FRAMES = {}           # filled in by Player, used to draw Buddy
+BOSS_HP[5] = BUDDY_HP
+BOLT_SCALE = 0.55            # size of the Big Bolt pictures
+BOLT_DAMAGE = 5              # one rapid-fire bolt
+CAR_DAMAGE = 15              # one thrown car
+L4_SUMMON_FIRST = 12.0       # seconds into the boss fight before Big Bolt's first summon
+L4_SUMMON_EVERY = 22.0       # then he calls in more power grunts this often...
+L4_SUMMON_COUNT = 2          # ...and this many at a time
+JUNK_FORT_X = 2800           # how far you walk through the junkyard before the fort gate
+THRONE_X = 850
+THRONE_SEAT = GROUND_Y - 112
+LEVEL4_YARD_PLATFORMS = [
+    (150, GROUND_Y - 130, 190, PLATFORM_HEIGHT),
+    (620, GROUND_Y - 130, 190, PLATFORM_HEIGHT),
+]
+LEVEL4_ROOM_PLATFORMS = [    # phase 3: platforms in the throne room
+    (40, GROUND_Y - 130, 180, PLATFORM_HEIGHT),
+    (250, GROUND_Y - 235, 170, PLATFORM_HEIGHT),
+    (470, GROUND_Y - 140, 170, PLATFORM_HEIGHT),
+    (610, GROUND_Y - 260, 140, PLATFORM_HEIGHT),
+]
+BOLTS_SEQUENCE = [(0, 0.30), (1, 0.30), (2, 0.50), (3, 0.20), (4, 0.20), (5, 0.20)]   # fires during picture 3
+CARS_SEQUENCE = [(0, 0.30), (1, 0.35), (2, 0.55), (3, 0.25), (4, 0.20), (5, 0.20)]
 LEVEL3_ROOM_PLATFORMS = [    # phase 3: platforms in the secret room
     (60, GROUND_Y - 130, 190, PLATFORM_HEIGHT),
     (710, GROUND_Y - 130, 190, PLATFORM_HEIGHT),
@@ -257,10 +415,13 @@ DELUGE_SEQUENCE = [(0, 0.45), (1, 0.35), (2, 0.45), (3, 0.45), (4, 0.35)]
 ATTACK_SEQUENCES = {"attack": ATTACK_SEQUENCE, "wave": WAVE_SEQUENCE, "rain": RAIN_SEQUENCE,
                     "hook": HOOK_SEQUENCE, "poison": POISON_SEQUENCE, "tsunami": TSUNAMI_SEQUENCE,
                     "trash": TRASH_SEQUENCE, "can": CAN_SEQUENCE, "deluge": DELUGE_SEQUENCE,
-                    "rat_spit": RAT_SPIT_SEQUENCE, "rat_spin": RAT_SPIN_SEQUENCE}
+                    "rat_spit": RAT_SPIT_SEQUENCE, "rat_spin": RAT_SPIN_SEQUENCE,
+                    "bolts": BOLTS_SEQUENCE, "cars": CARS_SEQUENCE,
+                    "slash": BUDDY_SLASH_SEQUENCE, "dash": BUDDY_DASH_SEQUENCE, "boulders": BUDDY_BOULDER_SEQUENCE, "throw": BUDDY_THROW_SEQUENCE}
 # the picture (position in the sequence) when the attack actually goes off
 ATTACK_RELEASE = {"wave": WAVE_RELEASE, "hook": 2, "poison": 2, "tsunami": 2,
-                  "trash": 2, "can": 2, "deluge": 2}
+                  "trash": 2, "can": 2, "deluge": 2, "bolts": 2, "cars": 2,
+                  "slash": 2, "dash": 1, "boulders": 2, "throw": 1}
 
 ENEMY_TYPES = {
     "grunt": {"hp": 30, "speed": 90, "size": (44, 70), "color": (190, 60, 60),
@@ -274,6 +435,11 @@ ENEMY_TYPES = {
     "final_boss": {"hp": 1200, "speed": 100, "size": (160, 220), "color": (60, 20, 90),
                    "touch": 25, "coins": 300, "range": 300, "delay": 1.2, "shot": 14},
 }
+
+ENEMY_TYPES["power_grunt"] = {"hp": POWER_GRUNT_HP, "speed": POWER_GRUNT_SPEED, "size": (44, 70),
+                              "color": (190, 60, 60), "touch": POWER_GRUNT_TOUCH, "coins": 8, "range": 0,
+                              "jumps": True}
+GRUNT_KINDS = ("grunt", "power_grunt")      # enemies that use the Papyrus grunt pictures
 
 ENEMY_TYPES["rat"] = {"hp": RAT_HP, "speed": 115, "size": RAT_SIZE, "color": (110, 110, 120),
                       "touch": 10, "coins": 10, "range": 0, "jumps": True}
@@ -296,6 +462,10 @@ LEVEL_INTRO = {
         ("MISSION", "Walk right to find the manhole. Watch your step."),
     ],
 }
+LEVEL_INTRO[4] = [
+    ("MISSION", "The junkyard. Big Bolt's scrap-car fort rises at the far end of it."),
+    ("MISSION", "Walk right to find the fort. Every enemy here has to go down before the job is done."),
+]
 LEVEL_BOSS_TALK = {
     1: [
         ("RUSTY", "So you're the one who has been scrapping my crew."),
@@ -313,7 +483,27 @@ LEVEL_BOSS_TALK = {
     ],
 }
 
-BOSS_NAMES = ["Rusty", "Crate Captain", "Sly Sam", "Big Bolt", "THE BIG BOSS"]
+LEVEL_INTRO[5] = [
+    ("MISSION", "A sunny forest clearing. Buddy is waiting for you, and this time it's a sword fight."),
+    ("MISSION", "You swing a golden sword now: click or hold F. Every 10 hits you land charges your SPECIAL. Press T to unleash it."),
+    ("MISSION", "Buddy will call in power grunts, and he gets a lot more dangerous when he's hurt. Beat him AND everything he summons."),
+]
+LEVEL_BOSS_TALK[5] = [
+    ("BUDDY", "So you really made it all the way here. Past my crew, past my fort, past everything."),
+    ("BUDDY", "I'll admit, I'm impressed. But this is where it ends."),
+    ("BUDDY", "Come on then. Let's see what that shiny sword can do!"),
+]
+L5_POWER_TALK = [
+    ("BUDDY", "Huh... you're a lot tougher than I thought."),
+    ("BUDDY", "Well, I can be tough too. Let's see you try me now!"),
+]
+LEVEL_BOSS_TALK[4] = [
+    ("BIG BOLT", "Hrrrm. A little pest crawled all the way through MY junkyard."),
+    ("BIG BOLT", "Every car in this fort was crushed by these hands. Yours is next."),
+    ("BIG BOLT", "Bolts! Cars! And if that isn't enough... I'll call in more muscle."),
+]
+
+BOSS_NAMES = ["Rusty", "Crate Captain", "Sly Sam", "Big Bolt", "BUDDY"]
 
 # Level 2 phase-change dialogue
 L2_TIDE_TALK = [
@@ -330,6 +520,17 @@ L3_RATS_DONE = [
 L3_SECRET_TALK = [
     ("MISSION", "A secret room deep in the sewer: Sly Sam's hideout. He will keep calling in more rats, so watch both sides."),
 ]
+L4_YARD_TALK = [
+    ("MISSION", "You slip through the gate into the fort's courtyard... and the gate slams shut behind you."),
+    ("MISSION", "The grunts in here are POWERED UP: tougher, faster and their arrows hurt more. 15 of them, from BOTH sides!"),
+]
+L4_YARD_DONE = [
+    ("MISSION", "That's all 15 power grunts. A heavy gate at the end of the courtyard grinds open..."),
+    ("MISSION", "Walk right to find Big Bolt's throne room."),
+]
+L4_THRONE_TALK = [
+    ("MISSION", "The throne room. Big Bolt sits on a throne made of crushed cars, and he can call in power grunts. Beat him AND everything he summons."),
+]
 L2_TOP_TALK = [
     ("MISSION", "You made it to the lamp room at the top. Someone is waiting for you inside..."),
 ]
@@ -338,8 +539,9 @@ L2_TOP_TALK = [
 # ------------------------------------------------------------------
 # SAVE / LOAD
 # ------------------------------------------------------------------
+# WHY: Defaults are merged under the loaded data so saves from older versions (missing new keys) keep working instead of crashing.
 def load_save():
-    data = {"unlocked": 1, "coins": 0, "damage_level": 0, "heals": 2, "beaten": []}
+    data = {"unlocked": 1, "coins": 0, "damage_level": 0, "heals": 2, "mag_level": 0, "beaten": []}
     try:
         with open(SAVE_PATH) as f:
             data.update(json.load(f))
@@ -395,6 +597,7 @@ def lerp_color(a, b, t):
     return tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
 
 
+# WHY: Uses the previous and next y so a fast-falling body can't tunnel through a thin platform between frames; only lands when moving down from above.
 def floor_under(prev_y, y, x, vy, platforms):
     """Where a falling thing lands this frame (platform top or the ground).
     Returns None if it is still in the air. Platforms only count when you
@@ -438,10 +641,11 @@ def frames_to_art(frames):
     return {"idle": tuples, "walk": tuples, "jump_up": [tuples[1]], "jump_down": [tuples[1]]}
 
 
+# WHY: Art is drawn facing right; mirroring is done once up front rather than every frame because flipping surfaces per draw is wasteful.
 def flip_art(art):
     out = {}
     for key, value in art.items():
-        if key in ("bone", "crate", "orb", "glob", "can_img"):
+        if key in ("bone", "crate", "orb", "glob", "can_img", "bolt_img", "car_img", "crescent_img"):
             out[key] = pygame.transform.flip(value, True, False)
         else:
             out[key] = [(pygame.transform.flip(s, True, False), s.get_width() - ax) for s, ax in value]
@@ -474,6 +678,7 @@ def get_enemy_art(names, size, color):
     return ENEMY_ART_CACHE[key]
 
 
+# WHY: Lets the game run with or without art files: missing assets fall back to drawn shapes instead of crashing.
 def find_asset(base):
     result = ""
     for ext in (".jpg", ".jpeg", ".png", ".jfif"):
@@ -658,6 +863,7 @@ def build_boss_art(prefix):
     return art
 
 
+# WHY: Returns an anchor_x so frames of different widths stay planted on the same foot position and don't jitter while animating.
 def load_strip(path, count, scale):
     """A strip of equal-sized frames (already transparent) -> list of (surface, anchor_x)."""
     sheet = pygame.image.load(path).convert_alpha()
@@ -743,6 +949,157 @@ def build_sly_art():
     }
 
 
+def make_bolt_surface():
+    """A big hex bolt flying sideways (pointing right)."""
+    surf = pygame.Surface((34, 14), pygame.SRCALPHA)
+    pygame.draw.rect(surf, (120, 124, 130), (0, 1, 9, 12))
+    pygame.draw.rect(surf, (60, 62, 70), (0, 1, 9, 12), 2)
+    pygame.draw.rect(surf, (170, 175, 182), (9, 4, 24, 6))
+    for x in range(12, 33, 4):
+        pygame.draw.line(surf, (80, 84, 92), (x, 4), (x, 9), 1)
+    pygame.draw.rect(surf, (60, 62, 70), (9, 4, 24, 6), 1)
+    pygame.draw.rect(surf, (255, 210, 90), (30, 5, 3, 4))
+    return surf
+
+
+def make_car_surface():
+    """A rusty wrecked car flying sideways (front on the right)."""
+    surf = pygame.Surface((92, 40), pygame.SRCALPHA)
+    pygame.draw.rect(surf, (140, 72, 42), (2, 16, 88, 20), border_radius=4)
+    pygame.draw.polygon(surf, (120, 60, 36), [(18, 16), (30, 3), (62, 3), (74, 16)])
+    pygame.draw.polygon(surf, (36, 44, 52), [(24, 15), (33, 6), (45, 6), (45, 15)])
+    pygame.draw.polygon(surf, (36, 44, 52), [(49, 15), (49, 6), (60, 6), (68, 15)])
+    pygame.draw.rect(surf, (80, 40, 26), (2, 16, 88, 20), 2, border_radius=4)
+    pygame.draw.rect(surf, (200, 190, 120), (82, 20, 7, 6))
+    pygame.draw.rect(surf, (60, 40, 36), (4, 26, 10, 6))
+    for wx in (22, 70):
+        pygame.draw.circle(surf, (24, 24, 28), (wx, 36), 7)
+        pygame.draw.circle(surf, (110, 110, 118), (wx, 36), 3)
+    return surf
+
+
+def build_bolt_art():
+    strips = {}
+    for name in ("idle", "walk", "jump", "bolts", "cars"):
+        path = find_asset("big_bolt_" + name)
+        if path == "":
+            return None
+        strips[name] = load_strip(path, 6, BOLT_SCALE)
+    return {
+        "idle": strips["idle"],
+        "walk": strips["walk"],
+        "jump_up": [strips["jump"][2]],
+        "jump_down": [strips["jump"][4]],
+        "bolts": strips["bolts"],
+        "cars": strips["cars"],
+        "bolt_img": make_bolt_surface(),
+        "car_img": make_car_surface(),
+    }
+
+
+SWORD = {"loaded": False, "right": None, "left": None}
+
+
+def get_sword_art():
+    """{"right": {...}, "left": {...}} with lists of (picture, glove_pivot) for sword_idle / sword_swing /
+    sword_special, or None if the pictures are missing."""
+    if not SWORD["loaded"]:
+        SWORD["loaded"] = True
+        right = {}
+        left = {}
+        for name, count in (("idle", 1), ("swing", 4), ("special", 6)):
+            path = find_asset("sword_" + name)
+            if path == "":
+                right = None
+                break
+            right[name] = []
+            left[name] = []
+            for surf, _anchor in load_strip(path, count, SWORD_SCALE):
+                pivot = (surf.get_width() * SWORD_PIVOT[0], surf.get_height() * SWORD_PIVOT[1])
+                right[name].append((surf, pivot))
+                left[name].append((pygame.transform.flip(surf, True, False), (surf.get_width() - pivot[0], pivot[1])))
+        if right is not None:
+            SWORD["right"] = right
+            SWORD["left"] = left
+    if SWORD["right"] is None:
+        return None
+    return SWORD
+
+
+def make_crescent(w, h, palette):
+    """A crescent that bulges to the right (a flying slash)."""
+    surf = pygame.Surface((w, h), pygame.SRCALPHA)
+    cx, cy = w * 0.12, h / 2.0
+    rx, ry = w * 0.88, h / 2.0 - 2
+    layers = ((1.10, 0.50, palette[0]), (1.0, 0.56, palette[1]), (0.95, 0.66, palette[2]), (0.88, 0.78, palette[3]))
+    for scale_out, inner, color in layers:
+        pts = []
+        for k in range(0, 21):
+            a = -math.pi / 2 + math.pi * k / 20
+            pts.append((cx + rx * scale_out * math.cos(a), cy + ry * min(1.0, scale_out) * math.sin(a)))
+        for k in range(20, -1, -1):
+            a = -math.pi / 2 + math.pi * k / 20
+            pts.append((cx + rx * inner * math.cos(a), cy + ry * min(1.0, scale_out) * math.sin(a)))
+        pygame.draw.polygon(surf, color, pts)
+    return surf
+
+
+GOLD_CRESCENT = [(255, 190, 40, 70), (235, 160, 24, 255), (255, 208, 64, 255), (255, 242, 176, 255)]
+RED_CRESCENT = [(225, 230, 255, 70), (120, 130, 165, 255), (196, 205, 230, 255), (252, 252, 255, 255)]   # silver slash
+EFFECTS = {}
+
+
+def get_effect(name):
+    if not EFFECTS:
+        gold = make_crescent(84, 170, GOLD_CRESCENT)
+        EFFECTS["gold_r"] = gold
+        EFFECTS["gold_l"] = pygame.transform.flip(gold, True, False)
+        red = make_crescent(84, 90, RED_CRESCENT)
+        EFFECTS["red_r"] = red
+        EFFECTS["red_l"] = pygame.transform.flip(red, True, False)
+        hat = pygame.Surface((54, 40), pygame.SRCALPHA)
+        pygame.draw.ellipse(hat, (22, 28, 48), (0, 24, 54, 14))
+        pygame.draw.rect(hat, (22, 28, 48), (11, 4, 32, 26), border_radius=4)
+        pygame.draw.rect(hat, (150, 152, 165), (11, 20, 32, 6))
+        pygame.draw.ellipse(hat, (12, 16, 30), (11, 1, 32, 9))
+        EFFECTS["hat"] = hat
+        sword = pygame.Surface((100, 30), pygame.SRCALPHA)       # Buddy's thrown sword
+        pygame.draw.rect(sword, (196, 190, 178), (20, 6, 62, 18), border_radius=3)
+        pygame.draw.line(sword, (120, 112, 100), (36, 6), (36, 23), 2)
+        pygame.draw.line(sword, (120, 112, 100), (54, 6), (54, 23), 2)
+        pygame.draw.circle(sword, (110, 70, 44), (88, 15), 11)
+        pygame.draw.circle(sword, (40, 24, 14), (88, 15), 11, 2)
+        pygame.draw.rect(sword, (90, 56, 36), (0, 11, 22, 8))
+        pygame.draw.rect(sword, (215, 175, 60), (15, 3, 6, 24))
+        pygame.draw.rect(sword, (40, 28, 20), (20, 6, 62, 18), 2, border_radius=3)
+        EFFECTS["sword"] = sword
+        glow = pygame.Surface((120, 120), pygame.SRCALPHA)
+        for r, a in ((58, 30), (42, 46), (26, 70)):
+            pygame.draw.circle(glow, (255, 215, 80, a), (60, 60), r)
+        EFFECTS["glow"] = glow
+        aura = pygame.Surface((340, 340), pygame.SRCALPHA)
+        for r, a in ((165, 22), (135, 30), (105, 38), (75, 46)):
+            pygame.draw.circle(aura, (255, 70, 30, a), (170, 170), r)
+        EFFECTS["aura"] = aura
+    return EFFECTS[name]
+
+
+def build_buddy_art():
+    """Buddy's pictures: one strip per animation (buddy_idle.png, buddy_walk.png ...), like the other bosses."""
+    wanted = (("idle", 1), ("walk", 4), ("jump", 2), ("slash", 4), ("dash", 4), ("boulders", 4), ("throw", 5))
+    art = {}
+    for name, count in wanted:
+        path = find_asset("buddy_" + name)
+        if path == "":
+            return None
+        art[name] = load_strip(path, count, BUDDY_SCALE)
+    art["jump_up"] = [art["jump"][0]]
+    art["jump_down"] = [art["jump"][1]]
+    del art["jump"]
+    art["crescent_img"] = get_effect("red_r")
+    return art
+
+
 RAT = {"loaded": False, "right": None, "left": None}
 
 
@@ -787,6 +1144,10 @@ def get_boss_art(level_no):
             art = build_captain_art()
         elif prefix == "sly_sam":
             art = build_sly_art()
+        elif prefix == "big_bolt":
+            art = build_bolt_art()
+        elif prefix == "buddy":
+            art = build_buddy_art()
         else:
             art = build_boss_art(prefix)
         BOSS_ART[prefix] = None if art is None else (art, flip_art(art))
@@ -802,6 +1163,7 @@ class Pistol:
         self.left = flipped(self.right)
         self.sequence = None
         self.time = 0.0
+        self.mag_size = MAG_SIZE
         self.ammo = MAG_SIZE
 
     def busy(self):
@@ -810,6 +1172,8 @@ class Pistol:
     def play(self, sequence):
         self.sequence = sequence
         self.time = 0.0
+        if sequence is RELOAD_SEQUENCE:
+            play_sfx("reload")             # every reload, including the automatic one
 
     def update(self, dt):
         if self.sequence is not None:
@@ -819,7 +1183,7 @@ class Pistol:
                 finished = self.sequence
                 self.sequence = None
                 if finished is RELOAD_SEQUENCE:
-                    self.ammo = MAG_SIZE
+                    self.ammo = self.mag_size
                 if self.ammo <= 0:
                     self.play(RELOAD_SEQUENCE)
 
@@ -845,6 +1209,9 @@ class Player:
         self.idle_l = flipped(self.idle_r)
         self.walk_l = flipped(self.walk_r)
         self.jump_l = flipped(self.jump_r)
+        PLAYER_FRAMES["idle"] = self.idle_r
+        PLAYER_FRAMES["walk"] = self.walk_r
+        PLAYER_FRAMES["jump"] = self.jump_r
         self.pistol = Pistol()
         self.reset()
 
@@ -857,12 +1224,89 @@ class Player:
         self.moving = False
         self.land_timer = 0.0
         self.anim_time = 0.0
-        self.hp = MAX_HP
+        self.max_hp = MAX_HP            # level 5 raises this
+        self.hp = self.max_hp
         self.invuln = 0.0
         self.bullets = []
         self.pistol.sequence = None
         self.pistol.time = 0.0
-        self.pistol.ammo = MAG_SIZE
+        self.pistol.mag_size = MAG_SIZE + MAG_UPGRADE_BULLETS * self.progress["mag_level"]
+        self.pistol.ammo = self.pistol.mag_size
+        self.sword_mode = False         # the level 5 level turns this on
+        self.free_heals = False         # level 5 turns this on; reset every level so it never leaks
+        self.level_heals = 0            # level 5's own heal pool, separate from the bought heals
+        self.sword_seq = None
+        self.sword_kind = ""
+        self.sword_time = 0.0
+        self.sword_cd = 0.0
+        self.sword_hit = set()
+        self.special_charge = 0
+        self.special_ready = False
+        self.special_fired = False
+        self.waves = []
+
+    @property
+    def sword_damage(self):
+        return self.damage * SWORD_MULT
+
+    @property
+    def special_damage(self):
+        return self.damage * SPECIAL_MULT
+
+    def swing(self):
+        if self.sword_seq is None and self.sword_cd <= 0:
+            play_sfx("sword")
+            self.sword_seq = SWORD_SWING
+            self.sword_kind = "swing"
+            self.sword_time = 0.0
+            self.sword_hit = set()
+
+    def special(self):
+        if self.sword_mode and self.special_ready and self.sword_seq is None:
+            self.special_ready = False
+            self.special_charge = 0
+            self.special_fired = False
+            self.sword_seq = SWORD_SPECIAL
+            self.sword_kind = "special"
+            self.sword_time = 0.0
+            self.invuln = max(self.invuln, 0.8)
+
+    def add_charge(self):
+        if not self.special_ready:
+            self.special_charge += 1
+            if self.special_charge >= SPECIAL_HITS:
+                self.special_charge = SPECIAL_HITS
+                self.special_ready = True
+
+    def sword_active(self):
+        return (self.sword_seq is not None and self.sword_kind == "swing"
+                and frame_at(self.sword_seq, self.sword_time) in (1, 2))
+
+    def sword_rect(self):
+        if self.facing == 1:
+            left = int(self.x) - 30
+        else:
+            left = int(self.x) - SWORD_REACH
+        return pygame.Rect(left, int(self.y) - 150, SWORD_REACH + 30, 140)
+
+    def update_sword(self, dt):
+        self.sword_cd = max(0.0, self.sword_cd - dt)
+        if self.sword_seq is not None:
+            self.sword_time += dt
+            if (self.sword_kind == "special" and not self.special_fired
+                    and frame_at(self.sword_seq, self.sword_time) == SWORD_SPECIAL_RELEASE):
+                self.special_fired = True
+                self.waves.append({"x": self.x + self.facing * 60, "y": self.y - 80, "dir": self.facing,
+                                   "hit": set(), "alive": True, "t": 0.0})
+            if self.sword_time >= sum(d for _, d in self.sword_seq):
+                self.sword_seq = None
+                self.sword_cd = 0.06
+        for w in self.waves:
+            w["t"] += dt
+            w["x"] += w["dir"] * SPECIAL_SPEED * dt
+            if w["x"] < -100 or w["x"] > WIDTH + 100:
+                w["alive"] = False
+        self.waves = [w for w in self.waves if w["alive"]]
 
     @property
     def damage(self):
@@ -883,26 +1327,38 @@ class Player:
             self.invuln = 1.0
 
     def use_heal(self):
-        if self.progress["heals"] > 0 and self.hp < MAX_HP:
+        if self.free_heals:
+            # WHY: level 5 gives its own pool of heals without touching the saved count, so the bought heals are still there afterwards.
+            if self.level_heals > 0 and self.hp < self.max_hp:
+                self.level_heals -= 1
+                self.hp = min(self.max_hp, self.hp + HEAL_AMOUNT)
+        elif self.progress["heals"] > 0 and self.hp < self.max_hp:
             self.progress["heals"] -= 1
-            self.hp = min(MAX_HP, self.hp + HEAL_AMOUNT)
+            self.hp = min(self.max_hp, self.hp + HEAL_AMOUNT)
 
     def shoot(self):
+        if self.sword_mode:
+            self.swing()
+            return
         if not self.pistol.busy() and self.pistol.ammo > 0:
             self.pistol.ammo -= 1
             self.pistol.play(SHOOT_SEQUENCE)
+            play_sfx("shot")
             hx, hy = self.hand_pos()
             self.bullets.append({"x": hx + MUZZLE_DISTANCE * self.facing, "y": hy - 6,
                                  "vx": BULLET_SPEED * self.facing, "alive": True})
 
     def reload(self):
-        if not self.pistol.busy() and self.pistol.ammo < MAG_SIZE:
+        if self.sword_mode:
+            return
+        if not self.pistol.busy() and self.pistol.ammo < self.pistol.mag_size:
             self.pistol.play(RELOAD_SEQUENCE)
 
     def jump(self):
         if self.on_ground:
             self.vy = JUMP_SPEED
             self.on_ground = False
+            play_sfx("jump")
 
     def update(self, dt, direction, platforms):
         self.moving = direction != 0
@@ -928,6 +1384,8 @@ class Player:
 
         self.anim_time += dt
         self.pistol.update(dt)
+        if self.sword_mode:
+            self.update_sword(dt)
 
         for b in self.bullets:
             b["x"] += b["vx"] * dt
@@ -949,13 +1407,44 @@ class Player:
         frames = self.idle_r if right else self.idle_l
         return frames[int(self.anim_time * 6) % 6]
 
+    def draw_sword(self, screen, scroll):
+        hx = self.x + SWORD_HAND[0] * self.facing
+        hy = self.y + SWORD_HAND[1] + scroll
+        art = get_sword_art()
+        if art is None:                                     # sword strip missing: draw a simple one
+            pygame.draw.line(screen, (255, 215, 0), (hx, hy), (hx + self.facing * 70, hy - 50), 6)
+            return
+        side = art["right"] if self.facing == 1 else art["left"]
+        if self.sword_seq is None:
+            surf, pivot = side["idle"][0]
+        else:
+            cell = frame_at(self.sword_seq, self.sword_time)
+            surf, pivot = side["swing" if self.sword_kind == "swing" else "special"][cell]
+        if self.special_ready and self.sword_seq is None:
+            glow = get_effect("glow")
+            glow.set_alpha(150 + int(100 * math.sin(self.anim_time * 8)))
+            screen.blit(glow, (hx + self.facing * 30 - 60, hy - 60 - 20))
+        screen.blit(surf, (hx - pivot[0], hy - pivot[1]))
+
+    def draw_wave(self, screen, w, scroll):
+        key = "gold_r" if w["dir"] == 1 else "gold_l"
+        img = get_effect(key)
+        screen.blit(img, img.get_rect(center=(int(w["x"]), int(w["y"] + scroll))))
+        hat = pygame.transform.rotate(get_effect("hat"), -w["t"] * 900)
+        screen.blit(hat, hat.get_rect(center=(int(w["x"] + w["dir"] * 52), int(w["y"] + scroll))))
+
     def draw(self, screen, scroll=0.0):
         blink_off = self.invuln > 0 and int(self.invuln * 12) % 2 == 0
         if not blink_off:
             image = self.current_image()
             screen.blit(image, image.get_rect(midbottom=(self.x, self.y + scroll)))
-            hx, hy = self.hand_pos()
-            self.pistol.draw(screen, (hx, hy + scroll), self.facing)
+            if self.sword_mode:
+                self.draw_sword(screen, scroll)
+            else:
+                hx, hy = self.hand_pos()
+                self.pistol.draw(screen, (hx, hy + scroll), self.facing)
+        for w in self.waves:
+            self.draw_wave(screen, w, scroll)
         for b in self.bullets:
             pygame.draw.rect(screen, (255, 215, 0), (b["x"] - 6, b["y"] + scroll - 2, 12, 5))
 
@@ -1004,7 +1493,7 @@ class Enemy:
         self.attack_fired = False
         self.attack_cooldown = random.uniform(1.0, GRUNT_SHOOT_COOLDOWN[1])
 
-        papyrus = get_papyrus_art() if kind == "grunt" else None
+        papyrus = get_papyrus_art() if kind in GRUNT_KINDS else None
         boss_art = get_boss_art(level_no) if kind == "boss" else None
         rat_art = get_rat_art() if kind == "rat" else None
         self.sprite_boss = boss_art is not None
@@ -1024,8 +1513,14 @@ class Enemy:
             else:
                 names = ["enemy_" + kind]
             self.art_right, self.art_left = get_enemy_art(names, self.size, paint)
-        self.can_bow = GRUNTS_SHOOT and kind == "grunt" and "attack" in self.art_right
+        self.can_bow = GRUNTS_SHOOT and kind in GRUNT_KINDS and "attack" in self.art_right
         self.can_rat = kind == "rat" and "rat_spit" in self.art_right
+        self.powered = False            # Buddy's second form
+        self.dash_time = 0.0            # > 0 while Buddy is dashing
+        if kind == "boss" and level_no == 5:
+            self.cfg = dict(cfg, range=BUDDY_RANGE, delay=BUDDY_DELAY)
+            self.speed = BUDDY_SPEED
+            self.touch = BUDDY_TOUCH * (1 + 0.1 * (level_no - 1))
 
     @property
     def rect(self):
@@ -1058,6 +1553,11 @@ class Enemy:
             move = -self.facing
         self.moving = move != 0
         self.x += move * speed * dt
+        if self.dash_time > 0:
+            self.dash_time -= dt
+            self.x += self.facing * DASH_SPEED * (1.25 if self.powered else 1.0) * dt
+            self.moving = True
+        # WHY: Slight overshoot past the screen edges is allowed so enemies can walk in from off-screen, but not wander away forever.
         self.x = max(-60.0, min(WIDTH + 60.0, self.x))
 
         if self.can_bow:
@@ -1067,6 +1567,7 @@ class Enemy:
 
         # jumping up to platforms when the player is above
         self.jump_cooldown = max(0.0, self.jump_cooldown - dt)
+        # WHY: Enemies only jump when the player is clearly above them, otherwise they'd hop constantly and look broken.
         wants_jump = (cfg.get("jumps", False) and self.on_ground and self.jump_cooldown <= 0
                       and self.attack_time is None and player_y < self.y - 60 and dist < 300)
         if wants_jump:
@@ -1116,16 +1617,19 @@ class Enemy:
                     self.boss_attack("rain", player_x, bullets, hazards)
                     self.attack_fired = True
         else:
+            # WHY: Phase two plays animations faster so the boss feels more aggressive without separate art.
             self.attack_time += dt * (1.3 if self.phase_two() else 1.0)
             sequence = ATTACK_SEQUENCES[self.attack_name]
             position = frame_at(sequence, self.attack_time)
             release = ATTACK_RELEASE.get(self.attack_name)
+            # WHY: The hazard is released at a specific animation frame so the attack visibly matches the wind-up, and the flag stops it firing twice.
             if release is not None and position >= release and not self.attack_fired:
                 self.attack_fired = True
                 self.boss_attack(self.attack_name, player_x, bullets, hazards)
             if self.attack_time >= sum(d for _, d in sequence):
                 self.attack_time = None
                 self.attack_name = ""
+                # WHY: Shorter rest between attacks in phase two raises pressure as the fight goes on.
                 self.shot_timer = self.cfg["delay"] * (0.6 if self.phase_two() else 1.0)
 
     def update_rat(self, dt, dist, player_y, bullets, hazards):
@@ -1186,10 +1690,14 @@ class Enemy:
             if self.attack_time >= sum(d for _, d in ATTACK_SEQUENCE):
                 self.attack_time = None
                 self.attack_cooldown = random.uniform(GRUNT_SHOOT_COOLDOWN[0], GRUNT_SHOOT_COOLDOWN[1])
+                if self.kind == "power_grunt":
+                    self.attack_cooldown *= 0.75          # power grunts shoot a little more often
 
     def fire_bone(self, bullets):
         art = self.art_right if self.facing == 1 else self.art_left
         damage = GRUNT_SHOT_DAMAGE * (1 + 0.1 * (self.level_no - 1))
+        if self.kind == "power_grunt":
+            damage *= POWER_GRUNT_SHOT_MULT
         bullets.append({"x": self.x + self.facing * 45, "y": self.y - self.size[1] * 0.55,
                         "vx": self.facing * GRUNT_SHOT_SPEED, "vy": 0.0,
                         "damage": damage, "alive": True, "img": art["bone"]})
@@ -1238,6 +1746,38 @@ class Enemy:
                                 "vy": (GROUND_Y - 16 - y0 - 0.5 * gravity * flight * flight) / flight,
                                 "g": gravity, "rot": 0.0, "img": art["can_img"], "dmg": SLY_CAN_DAMAGE,
                                 "tint": "green", "alive": True})
+        elif attack == "bolts":
+            art = self.art_right if self.facing == 1 else self.art_left
+            count = 6 + (3 if self.phase_two() else 0)
+            for i in range(count):
+                bullets.append({"x": self.x + self.facing * 75, "y": self.y - self.size[1] * 0.52 + random.uniform(-8, 8),
+                                "vx": self.facing * 600, "vy": random.uniform(-25, 25),
+                                "damage": BOLT_DAMAGE * (1 + 0.1 * (self.level_no - 1)),
+                                "alive": True, "img": art["bolt_img"], "delay": i * 0.08})
+        elif attack == "cars":
+            art = self.art_right if self.facing == 1 else self.art_left
+            heights = [20, 150, 20] + ([150, 20] if self.phase_two() else [])
+            for i, h in enumerate(heights):
+                bullets.append({"x": self.x + self.facing * 70, "y": GROUND_Y - h, "vx": self.facing * 430, "vy": 0.0,
+                                "damage": CAR_DAMAGE * (1 + 0.1 * (self.level_no - 1)),
+                                "alive": True, "img": art["car_img"], "h": 34, "delay": i * 0.3})
+        elif attack == "slash":
+            art = self.art_right if self.facing == 1 else self.art_left
+            count = 2 if self.powered else 1
+            for i in range(count):
+                bullets.append({"x": self.x + self.facing * 80, "y": GROUND_Y - 48,
+                                "vx": self.facing * (500 if self.powered else 400), "vy": 0.0,
+                                "damage": SLASH_DAMAGE * (1 + 0.1 * (self.level_no - 1)),
+                                "alive": True, "img": art["crescent_img"], "h": 64, "delay": i * 0.5})
+        elif attack == "dash":
+            self.dash_time = 0.55 if self.powered else 0.38
+        elif attack == "throw":
+            speed = 760 if self.powered else 620
+            for i, (hy, wait) in enumerate(((38, 0.0), (165, 0.35))[:2 if self.powered else 1]):
+                hazards.append({"type": "boomerang", "x": self.x + self.facing * 50, "y": GROUND_Y - hy,
+                                "x0": self.x + self.facing * 50, "dir": self.facing, "t": 0.0, "rot": 0.0,
+                                "out": 0.95 if self.powered else 0.8, "speed": speed, "wait": wait,
+                                "hit": False, "turned": False, "alive": True})
         elif attack == "deluge":
             for direction in (-1, 1):
                 hazards.append({"type": "sludge", "x": self.x, "dir": direction, "age": 0.0, "alive": True})
@@ -1287,6 +1827,12 @@ class Enemy:
 
     def draw(self, screen):
         image, anchor = self.current_frame()
+        if self.powered:
+            aura = get_effect("aura")
+            aura.set_alpha(150 + int(90 * math.sin(self.anim_time * 6)))
+            screen.blit(aura, (self.x - 170, self.y - self.size[1] * 0.55 - 170))
+            image = image.copy()
+            image.fill((70, 8, 0), special_flags=pygame.BLEND_RGB_ADD)
         if self.flash > 0:
             image = image.copy()
             image.fill((90, 90, 90), special_flags=pygame.BLEND_RGB_ADD)
@@ -1307,6 +1853,7 @@ class Level:
         self.number = number
         self.player = player
         self.progress = progress
+        # WHY: Enemy count and spawn pace scale with the level number so each level is a bit harder without needing hand-tuned tables.
         self.total = 4 + number * 2
         self.spawned = 0
         self.killed = 0
@@ -1332,9 +1879,12 @@ class Level:
         self.boss_spawned = False
         self.boss_dead = False
         self.boss_name = BOSS_NAMES[number - 1]
+        # WHY: Coins only pay on the first win, otherwise replaying an easy level would be an infinite coin farm.
         self.replay = number in progress["beaten"]     # already beaten once: no coins this time
+        # WHY: Coins are held back until the level is won so dying doesn't bank them; that makes losing actually cost something.
         self.earned = 0                # coins collected this run: only kept if you beat the whole level
         self.scroll = 0.0              # how far the camera has moved up (only used by climbing levels)
+        self.pending_delay = 0.0       # seconds before a between-phase dialogue can be clicked away
         self.pending_dialogue = None   # a level can set this to show a dialogue (e.g. between phases)
 
     def status_text(self):
@@ -1348,6 +1898,13 @@ class Level:
     def phase_dialogue_done(self):
         """Called when a between-phase dialogue has been clicked through."""
         pass
+
+    def music_key(self):
+        """Which background music this level wants right now (see MUSIC_RULES at the top)."""
+        rules = MUSIC_RULES.get(self.number)
+        if rules is None:                                  # level 1: grunts first, then the Rusty fight
+            return "rusty" if self.boss_spawned else "grunts"
+        return rules.get(getattr(self, "phase", None))
 
     def draw_background(self, screen):
         t = (self.number - 1) / (FINAL_LEVEL - 1)
@@ -1370,17 +1927,21 @@ class Level:
                 self.spawned += 1
                 self.spawn_timer = self.spawn_delay
         elif not self.boss_spawned and alive == 0:
+            # WHY: The boss appears on the far side from the player so they get a moment to react instead of being hit on spawn.
             boss_x = WIDTH - 140 if self.player.x < WIDTH / 2 else 140
             if self.number == FINAL_LEVEL:
                 self.boss = Enemy("final_boss", boss_x, self.number)
             else:
                 color = lerp_color((200, 80, 30), (150, 0, 30), (self.number - 1) / (FINAL_LEVEL - 1))
                 self.boss = Enemy("boss", boss_x, self.number, color)
+            # WHY: Face the player immediately so the first attack isn't aimed the wrong way.
             self.boss.facing = 1 if self.player.x > boss_x else -1
             self.enemies.append(self.boss)
             self.boss_spawned = True
+            # WHY: The boss talks before fighting; flagging it here lets Game open the dialogue (Level has no access to the dialogue UI).
             self.talk_pending = True
 
+    # WHY: Platforms break only after the boss finishes talking so the player can't be dropped mid-conversation.
     def start_boss_fight(self):
         """Called once the boss has finished talking: the platforms start to break."""
         if len(self.platforms) > 0:
@@ -1472,6 +2033,26 @@ class Level:
                     p.take_damage(POISON_TICK * scale)
                 if h["life"] <= 0:
                     h["alive"] = False
+            elif h["type"] == "boomerang":
+                if h["wait"] > 0:
+                    h["wait"] -= dt
+                    continue
+                h["t"] += dt
+                h["rot"] += 900 * dt
+                if h["t"] < h["out"]:
+                    h["x"] += h["dir"] * h["speed"] * dt
+                else:
+                    h["x"] -= h["dir"] * h["speed"] * dt
+                    if not h["turned"]:
+                        h["turned"] = True
+                        h["hit"] = False              # it can hit you again on the way back
+                    if (h["x"] - h["x0"]) * h["dir"] <= 0:
+                        h["alive"] = False
+                r = pygame.Rect(0, 0, 66, 44)
+                r.center = (int(h["x"]), int(h["y"]))
+                if not h["hit"] and r.colliderect(p.rect):
+                    p.take_damage(BOOMERANG_DAMAGE * scale)
+                    h["hit"] = True
             elif h["type"] == "tsunami":
                 h["age"] += dt
                 h["x"] += h["dir"] * TSUNAMI_SPEED * dt
@@ -1521,17 +2102,23 @@ class Level:
                     self.boss_dead = True
                 else:
                     self.killed += 1
+        # WHY: Rewards are tallied above, before removal, otherwise dead enemies' coins would be lost.
         self.enemies = [e for e in self.enemies if e.hp > 0]
 
         for e in self.enemies:
             if e.rect.colliderect(p.rect):
-                p.take_damage(e.touch)
+                # WHY: Dashing bosses hit harder so the dash is a real threat that must be dodged, not just a visual.
+                p.take_damage(e.touch * (1.5 if e.dash_time > 0 else 1.0))
 
         for eb in self.enemy_bullets:
+            if eb.get("delay", 0.0) > 0:
+                # WHY: Queued shots wait their turn here so volleys stagger over time instead of all appearing at once.
+                eb["delay"] -= dt             # queued shot (rapid fire / car volley): not out yet
+                continue
             eb["x"] += eb["vx"] * dt
             eb["y"] += eb["vy"] * dt
             if "img" in eb:
-                r = pygame.Rect(0, 0, eb["img"].get_width(), 14)
+                r = pygame.Rect(0, 0, eb["img"].get_width(), eb.get("h", 14))
             else:
                 r = pygame.Rect(0, 0, 12, 12)
             r.center = (int(eb["x"]), int(eb["y"]))
@@ -1608,6 +2195,10 @@ class Level:
                     pygame.draw.circle(screen, (180, 210, 90), (bx, by), 4, 2)
             elif h["type"] == "melee":
                 pass        # the tail whack is part of the rat's picture
+            elif h["type"] == "boomerang":
+                if h["wait"] <= 0:
+                    img = pygame.transform.rotate(get_effect("sword"), -h["rot"])
+                    screen.blit(img, img.get_rect(center=(int(h["x"]), int(h["y"]))))
             elif h["type"] == "tsunami":
                 index = min(len(h["frames"]) - 1, int(h["age"] / 0.15))
                 image, anchor = h["frames"][index]
@@ -1628,6 +2219,10 @@ class Level:
                         pygame.draw.rect(screen, (70, 45, 25), crate, 3)
                         pygame.draw.line(screen, (70, 45, 25), crate.topleft, crate.bottomright, 3)
                         pygame.draw.line(screen, (70, 45, 25), crate.topright, crate.bottomleft, 3)
+                    elif self.number == 5:
+                        pygame.draw.circle(screen, (96, 96, 102), (x, y), 21)
+                        pygame.draw.circle(screen, (136, 136, 142), (x - 6, y - 7), 10)
+                        pygame.draw.circle(screen, (40, 40, 46), (x, y), 21, 3)
                     elif x % 2 == 0:
                         hexagon = [(x - 18, y), (x - 9, y - 16), (x + 9, y - 16),
                                    (x + 18, y), (x + 9, y + 16), (x - 9, y + 16)]
@@ -1646,6 +2241,8 @@ class Level:
         for e in self.enemies:
             e.draw(screen)
         for eb in self.enemy_bullets:
+            if eb.get("delay", 0.0) > 0:
+                continue
             if "img" in eb:
                 screen.blit(eb["img"], eb["img"].get_rect(center=(int(eb["x"]), int(eb["y"]))))
             else:
@@ -2353,7 +2950,655 @@ class Level3(Level):
             screen.blit(band, (0, GROUND_Y - 12))
 
 
+# ------------------------------------------------------------------
+# LEVEL 4: three phases
+#   junk       - walk through the car junkyard to the fort gate
+#   grunts     - 15 POWER grunts overrun you in the fort courtyard
+#   boss       - walk right into the throne room and fight Big Bolt (he summons power grunts)
+# ------------------------------------------------------------------
+CAR_COLORS = [(140, 72, 42), (112, 88, 62), (98, 104, 110), (152, 122, 62), (122, 52, 42), (70, 86, 98), (96, 60, 44)]
+FORT_LEFT = JUNK_FORT_X - 480       # world x of the left edge of the fort picture
+FORT_H = 440
+
+
+def draw_car(surf, x, y, s, color, wheels=True):
+    """A side-on wrecked car standing on the ground at (x, y). x is the centre."""
+    w = int(88 * s)
+    h = int(20 * s)
+    body = pygame.Rect(0, 0, w, h)
+    body.midbottom = (int(x), int(y - 6 * s))
+    dark = (max(0, color[0] - 55), max(0, color[1] - 55), max(0, color[2] - 55))
+    mid = (max(0, color[0] - 22), max(0, color[1] - 22), max(0, color[2] - 22))
+    pygame.draw.rect(surf, color, body, border_radius=3)
+    cab = [(body.left + int(16 * s), body.top), (body.left + int(28 * s), body.top - int(16 * s)),
+           (body.right - int(30 * s), body.top - int(16 * s)), (body.right - int(14 * s), body.top)]
+    pygame.draw.polygon(surf, mid, cab)
+    win = [(cab[0][0] + int(5 * s), body.top - 2), (cab[1][0] + int(3 * s), body.top - int(13 * s)),
+           (cab[2][0] - int(3 * s), body.top - int(13 * s)), (cab[3][0] - int(5 * s), body.top - 2)]
+    pygame.draw.polygon(surf, (30, 36, 44), win)
+    pygame.draw.line(surf, mid, (body.centerx, body.top - int(13 * s)), (body.centerx, body.top - 2), 2)
+    pygame.draw.rect(surf, dark, body, 2, border_radius=3)
+    pygame.draw.line(surf, dark, (body.left + int(30 * s), body.top + 2), (body.left + int(30 * s), body.bottom - 2), 1)
+    if wheels:
+        for wx in (body.left + int(20 * s), body.right - int(20 * s)):
+            pygame.draw.circle(surf, (22, 22, 26), (wx, body.bottom), max(3, int(8 * s)))
+            pygame.draw.circle(surf, (110, 110, 118), (wx, body.bottom), max(1, int(3 * s)))
+
+
+def make_piles(rng, end, wmin, wmax, hmin, hmax):
+    out = []
+    x = -100
+    while x < end:
+        w = rng.randint(wmin, wmax)
+        h = rng.randint(hmin, hmax)
+        bits = [(rng.random(), rng.random(), rng.randint(10, 26), rng.randint(5, 10), rng.randrange(len(CAR_COLORS)))
+                for _ in range(7)]
+        out.append((x, w, h, bits))
+        x += int(w * rng.uniform(0.5, 0.9))
+    return out
+
+
+def draw_mound(screen, x, w, h, base_y, color, bits):
+    pts = [(x, base_y), (x + 0.15 * w, base_y - 0.6 * h), (x + 0.3 * w, base_y - 0.45 * h),
+           (x + 0.5 * w, base_y - h), (x + 0.7 * w, base_y - 0.55 * h), (x + 0.85 * w, base_y - 0.7 * h),
+           (x + w, base_y)]
+    pygame.draw.polygon(screen, color, pts)
+    edge = (max(0, color[0] - 28), max(0, color[1] - 28), max(0, color[2] - 28))
+    pygame.draw.polygon(screen, edge, pts, 2)
+    for fx, fy, bw, bh, ci in bits:
+        bx = x + 0.15 * w + fx * 0.7 * w
+        by = base_y - 6 - fy * 0.55 * h
+        c = CAR_COLORS[ci]
+        pygame.draw.rect(screen, (c[0] // 2 + color[0] // 2, c[1] // 2 + color[1] // 2, c[2] // 2 + color[2] // 2),
+                         (int(bx), int(by), bw, bh))
+
+
+def make_fort_surface():
+    surf = pygame.Surface((1100, FORT_H), pygame.SRCALPHA)
+    rng = random.Random(31)
+    gate = 480
+    rows = 13
+    for r in range(rows):
+        y = FORT_H - 2 - r * 30
+        x = -20 - (r % 2) * 43
+        while x < 1140:
+            cx = x + 44
+            tower = (30 < cx < 270) or (830 < cx < 1070)
+            if r >= 10 and not tower:
+                x += 86
+                continue
+            if r >= 11 and not (60 < cx < 240 or 860 < cx < 1040):
+                x += 86
+                continue
+            if r < 6 and abs(cx - gate) < 100:
+                x += 86
+                continue
+            draw_car(surf, cx, y, 1.0, rng.choice(CAR_COLORS), wheels=(r == 0))
+            x += 86
+    pygame.draw.rect(surf, (12, 9, 10), (gate - 62, FORT_H - 196, 124, 196))                 # the gate opening
+    for bx in range(gate - 50, gate + 60, 22):
+        pygame.draw.line(surf, (58, 48, 44), (bx, FORT_H - 196), (bx, FORT_H - 6), 3)
+    pygame.draw.rect(surf, (88, 62, 48), (gate - 84, FORT_H - 212, 168, 18))               # lintel
+    pygame.draw.rect(surf, (40, 28, 24), (gate - 84, FORT_H - 212, 168, 18), 3)
+    for sx in range(gate - 78, gate + 80, 26):
+        pygame.draw.polygon(surf, (150, 150, 158), [(sx, FORT_H - 212), (sx + 6, FORT_H - 232), (sx + 12, FORT_H - 212)])
+    return surf
+
+
+def make_car_wall(dim, tint, seed):
+    surf = pygame.Surface((WIDTH, GROUND_Y))
+    surf.fill((22, 18, 20))
+    rng = random.Random(seed)
+    for r in range(GROUND_Y // 30 + 2):
+        y = GROUND_Y + 2 - r * 30
+        x = -20 - (r % 2) * 43
+        while x < WIDTH + 90:
+            draw_car(surf, x + 44, y, 1.0, rng.choice(CAR_COLORS), wheels=False)
+            x += 86
+    shade = pygame.Surface((WIDTH, GROUND_Y), pygame.SRCALPHA)
+    shade.fill((tint[0], tint[1], tint[2], dim))
+    surf.blit(shade, (0, 0))
+    return surf
+
+
+class Level4(Level):
+    def __init__(self, number, player, progress):
+        Level.__init__(self, number, player, progress)
+        self.total = L4_GRUNTS
+        self.spawn_delay = L4_SPAWN_DELAY
+        self.max_alive = L4_MAX_ALIVE
+        self.kinds = ["power_grunt"]
+        self.platforms = []
+        self.phase = "junk"       # junk, entering, to_yard, grunts, grunts_done, go_right, to_boss, boss
+        self.scroll_x = 0.0
+        self.enter_t = 0.0
+        self.door_t = 0.0
+        self.anim_t = 0.0
+        self.summon_timer = L4_SUMMON_FIRST
+        self.summon_warning = 0.0
+        self.far = make_piles(random.Random(21), 1900, 160, 320, 70, 150)
+        self.mid = make_piles(random.Random(22), 2700, 120, 260, 60, 130)
+        rng = random.Random(23)
+        self.near_cars = []
+        x = 260
+        while x < JUNK_FORT_X - 360:
+            self.near_cars.append((x, rng.uniform(0.9, 1.35), rng.randrange(len(CAR_COLORS)), rng.randrange(3)))
+            x += rng.randint(170, 330)
+        self.fort = make_fort_surface()
+        self.yard_wall = make_car_wall(120, (40, 24, 18), 41)
+        self.throne_wall = make_car_wall(165, (30, 8, 8), 42)
+        self.glow = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        self.fade = pygame.Surface((WIDTH, HEIGHT))
+        self.fade.fill((0, 0, 0))
+
+    # ---------- phase logic ----------
+    def start_boss_fight(self):
+        # Big Bolt leaps off his throne; the platforms in the room do not break
+        if self.boss is not None and self.boss.hp > 0:
+            self.boss.vy = -760.0
+            self.boss.on_ground = False
+
+    def status_text(self):
+        if self.phase in ("junk", "entering", "to_yard"):
+            return "PHASE 1 - Reach Big Bolt's fort"
+        if self.phase in ("grunts", "grunts_done"):
+            return "PHASE 2 - Power grunts left: " + str(self.total - self.killed)
+        if self.phase in ("go_right", "to_boss"):
+            return "PHASE 3 - Find Big Bolt's throne room"
+        if self.phase == "boss" and self.boss_dead:
+            return "Finish off the power grunts! (" + str(len(self.enemies)) + " left)"
+        return None
+
+    def banner_text(self):
+        if self.phase == "go_right" and int(self.anim_t * 2) % 2 == 0:
+            return "GO RIGHT  >>>"
+        if self.phase == "junk" and self.scroll_x < 400 and int(self.anim_t * 2) % 2 == 0:
+            return "WALK RIGHT  >>>"
+        if self.phase == "boss" and self.summon_warning > 0:
+            return "BIG BOLT CALLS " + str(L4_SUMMON_COUNT) + " POWER GRUNTS!"
+        return None
+
+    def phase_dialogue_done(self):
+        if self.phase == "to_yard":
+            self.begin_grunts()
+        elif self.phase == "grunts_done":
+            self.phase = "go_right"
+        elif self.phase == "to_boss":
+            self.begin_boss_phase()
+
+    def put_player(self, x):
+        p = self.player
+        p.x = float(x)
+        p.y = float(GROUND_Y)
+        p.vy = 0.0
+        p.on_ground = True
+        p.bullets = []
+
+    def clear_field(self):
+        self.enemies = []
+        self.enemy_bullets = []
+        self.hazards = []
+
+    def begin_grunts(self):
+        self.phase = "grunts"
+        self.put_player(WIDTH / 2)
+        self.scroll_x = 0.0
+        self.clear_field()
+        self.platforms = [pygame.Rect(r) for r in LEVEL4_YARD_PLATFORMS]
+        self.spawned = 0
+        self.killed = 0
+        self.spawn_timer = 1.2
+
+    def begin_boss_phase(self):
+        self.phase = "boss"
+        self.platforms = [pygame.Rect(r) for r in LEVEL4_ROOM_PLATFORMS]
+        self.door_t = 0.0
+        self.put_player(130)
+        self.clear_field()
+        self.boss = Enemy("boss", THRONE_X, self.number, (120, 80, 60))
+        self.boss.y = float(THRONE_SEAT)            # he starts seated on the throne
+        self.boss.facing = -1
+        self.enemies.append(self.boss)
+        self.boss_spawned = True
+        self.talk_pending = True
+        self.summon_timer = L4_SUMMON_FIRST
+
+    def summon(self):
+        for i in range(L4_SUMMON_COUNT):
+            x = -50 - 45 * (i // 2) if i % 2 == 0 else WIDTH + 50 + 45 * (i // 2)
+            g = Enemy("power_grunt", x, self.number)
+            g.coins = 0                         # summoned grunts give no coins (no farming)
+            self.enemies.append(g)
+        self.summon_warning = 2.5
+
+    def spawn_logic(self, dt):
+        if self.phase == "grunts":
+            if self.spawned >= self.total:
+                return
+            self.spawn_timer -= dt
+            if self.spawn_timer <= 0 and len(self.enemies) + 2 <= self.max_alive:
+                for side in (-50, WIDTH + 50):          # one from each side at the same moment
+                    if self.spawned < self.total:
+                        self.enemies.append(Enemy("power_grunt", side, self.number))
+                        self.spawned += 1
+                self.spawn_timer = self.spawn_delay
+        elif self.phase == "boss" and not self.boss_dead:
+            self.summon_warning = max(0.0, self.summon_warning - dt)
+            self.summon_timer -= dt
+            if self.summon_timer <= 0:
+                alive = sum(1 for e in self.enemies if e.kind == "power_grunt")
+                if alive >= 4:
+                    self.summon_timer = 3.0              # too crowded already: try again shortly
+                else:
+                    self.summon()
+                    self.summon_timer = L4_SUMMON_EVERY
+
+    def update(self, dt):
+        self.anim_t += dt
+        ph = self.phase
+        if ph == "junk":
+            return self.update_junk()
+        if ph == "entering":
+            return self.update_entering(dt)
+        if ph in ("grunts", "go_right", "boss"):
+            result = Level.update(self, dt)
+            if ph == "grunts":
+                if result == "" and self.spawned >= self.total and len(self.enemies) == 0:
+                    self.phase = "grunts_done"
+                    self.pending_dialogue = L4_YARD_DONE
+            elif ph == "go_right":
+                self.door_t = min(1.0, self.door_t + dt)
+                if self.player.x >= WIDTH - 50:
+                    self.phase = "to_boss"
+                    self.pending_dialogue = L4_THRONE_TALK
+            elif result == "won" and len(self.enemies) > 0:
+                result = ""                    # Big Bolt is down, but everything he summoned must go too
+            return result
+        if ph == "grunts_done":
+            self.door_t = min(1.0, self.door_t + dt)
+        return "lost" if self.player.hp <= 0 else ""
+
+    def update_junk(self):
+        p = self.player
+        max_scroll = JUNK_FORT_X - 640
+        if p.x > 520 and self.scroll_x < max_scroll:
+            d = min(p.x - 520, max_scroll - self.scroll_x)
+            self.scroll_x += d
+            p.x -= d
+        elif p.x < 300 and self.scroll_x > 0:
+            d = min(300 - p.x, self.scroll_x)
+            self.scroll_x -= d
+            p.x += d
+        if p.x + self.scroll_x >= JUNK_FORT_X:
+            self.phase = "entering"
+            self.enter_t = 0.0
+        return ""
+
+    def update_entering(self, dt):
+        p = self.player
+        self.enter_t += dt
+        p.x = JUNK_FORT_X - self.scroll_x
+        p.vy = 0.0
+        if self.enter_t >= 1.2:
+            self.phase = "to_yard"
+            self.pending_dialogue = L4_YARD_TALK
+        return ""
+
+    # ---------- drawing ----------
+    def draw_platforms(self, screen):
+        for p in self.platforms:
+            pygame.draw.rect(screen, (104, 62, 42), p)
+            pygame.draw.rect(screen, (182, 126, 88), (p.left, p.top, p.width, 4))
+            pygame.draw.rect(screen, (40, 26, 22), p, 2)
+            for x in range(p.left + 10, p.right - 4, 26):
+                pygame.draw.circle(screen, (60, 40, 32), (x, p.top + 8), 2)
+
+    def draw_background(self, screen):
+        if self.phase in ("junk", "entering"):
+            self.draw_junkyard(screen)
+        elif self.phase == "to_yard":
+            screen.fill((0, 0, 0))
+        elif self.phase == "boss":
+            self.draw_throne_room(screen)
+        else:
+            self.draw_yard(screen)
+
+    def draw_junkyard(self, screen):
+        sx = self.scroll_x
+        bands = 14
+        for i in range(bands):
+            c = lerp_color((44, 34, 56), (186, 108, 66), i / (bands - 1))
+            top = i * GROUND_Y // bands
+            pygame.draw.rect(screen, c, (0, top, WIDTH, GROUND_Y // bands + 2))
+        sunx = int(720 - sx * 0.03)
+        pygame.draw.circle(screen, (214, 130, 70), (sunx, GROUND_Y - 70), 70)
+        pygame.draw.circle(screen, (232, 160, 90), (sunx, GROUND_Y - 70), 44)
+        for k in range(4):                                                       # smoke from the fort
+            cx = int(FORT_LEFT + 150 + k * 28 - sx * 0.9 + 10 * math.sin(self.anim_t * 0.6 + k))
+            cy = int(GROUND_Y - 330 - k * 46)
+            pygame.draw.circle(screen, (74, 62, 66), (cx, cy), 26 + k * 7)
+        for x, w, h, bits in self.far:
+            px = x - sx * 0.25
+            if -w < px < WIDTH:
+                draw_mound(screen, px, w, h, GROUND_Y - 10, (84, 62, 64), bits)
+        for x, w, h, bits in self.mid:
+            px = x - sx * 0.55
+            if -w < px < WIDTH:
+                draw_mound(screen, px, w, h, GROUND_Y + 4, (104, 78, 66), bits)
+        screen.blit(self.fort, (FORT_LEFT - sx, GROUND_Y + 6 - FORT_H))
+        pygame.draw.rect(screen, (88, 68, 52), (0, GROUND_Y, WIDTH, HEIGHT - GROUND_Y))
+        pygame.draw.rect(screen, (132, 104, 78), (0, GROUND_Y, WIDTH, 5))
+        for gx in range(-int(sx) % 53, WIDTH, 53):
+            pygame.draw.rect(screen, (64, 50, 40), (gx, GROUND_Y + 14 + (gx * 7) % 40, 14, 4))
+        for wx, sc, ci, kind in self.near_cars:
+            cx = wx - sx
+            if -120 < cx < WIDTH + 120:
+                draw_car(screen, cx, GROUND_Y + 6, sc, CAR_COLORS[ci], wheels=(kind != 0))
+                if kind == 2:
+                    draw_car(screen, cx + 12, GROUND_Y + 6 - 30 * sc, sc * 0.9, CAR_COLORS[(ci + 3) % len(CAR_COLORS)], False)
+                elif kind == 0:
+                    pygame.draw.circle(screen, (22, 22, 26), (int(cx + 62 * sc), GROUND_Y - 6), 15)
+                    pygame.draw.circle(screen, (60, 60, 66), (int(cx + 62 * sc), GROUND_Y - 6), 6)
+
+    def draw_barrel_fire(self, screen, x):
+        pygame.draw.rect(screen, (58, 60, 66), (x - 16, GROUND_Y - 40, 32, 40))
+        pygame.draw.rect(screen, (30, 32, 38), (x - 16, GROUND_Y - 40, 32, 40), 2)
+        pygame.draw.line(screen, (30, 32, 38), (x - 16, GROUND_Y - 24), (x + 15, GROUND_Y - 24), 2)
+        t = self.anim_t * 9 + x
+        for k, (dx, h, c) in enumerate(((0, 38, (255, 120, 30)), (-8, 26, (255, 170, 50)),
+                                        (8, 28, (255, 170, 50)), (0, 20, (255, 232, 130)))):
+            hh = h + int(7 * math.sin(t + k * 1.7))
+            pygame.draw.polygon(screen, c, [(x + dx - 9, GROUND_Y - 40), (x + dx, GROUND_Y - 40 - hh),
+                                            (x + dx + 9, GROUND_Y - 40)])
+        pulse = 1 + 0.12 * math.sin(self.anim_t * 7 + x)
+        pygame.draw.circle(self.glow, (255, 140, 50, 36), (x, GROUND_Y - 60), int(120 * pulse))
+
+    def draw_floor(self, screen, top_c, line_c, slab_c):
+        pygame.draw.rect(screen, top_c, (0, GROUND_Y, WIDTH, HEIGHT - GROUND_Y))
+        pygame.draw.rect(screen, line_c, (0, GROUND_Y, WIDTH, 6))
+        for x in range(0, WIDTH, 90):
+            pygame.draw.line(screen, slab_c, (x, GROUND_Y + 6), (x, HEIGHT), 2)
+        for gx in range(20, WIDTH, 71):
+            pygame.draw.rect(screen, slab_c, (gx, GROUND_Y + 12 + (gx * 5) % 40, 12, 4))
+
+    def draw_gate_slab(self, screen, x, lift_t):
+        """A heavy scrap-metal gate; lift_t 0 = closed, 1 = fully open."""
+        pygame.draw.rect(screen, (8, 6, 6), (x, GROUND_Y - 190, 64, 190))
+        lift = int(185 * lift_t)
+        slab = pygame.Rect(x, GROUND_Y - 190 - lift, 64, 190)
+        if lift < 185:
+            pygame.draw.rect(screen, (96, 70, 54), slab)
+            pygame.draw.rect(screen, (40, 28, 22), slab, 3)
+            for yy in range(slab.top + 18, slab.bottom, 24):
+                pygame.draw.line(screen, (60, 42, 34), (slab.left, yy), (slab.right, yy), 2)
+            for yy in range(slab.top + 10, slab.bottom - 4, 36):
+                pygame.draw.polygon(screen, (220, 180, 40), [(x + 6, yy), (x + 26, yy), (x + 12, yy + 14), (x - 8 + 6, yy + 14)])
+
+    def draw_yard(self, screen):
+        screen.blit(self.yard_wall, (0, 0))
+        pygame.draw.rect(screen, (60, 44, 38), (0, 40, WIDTH, 16))                    # top beam
+        pygame.draw.line(screen, (120, 92, 74), (0, 44), (WIDTH, 44), 2)
+        for cx in (200, 520, 840):                                                    # hanging chains and hooks
+            for k in range(6):
+                pygame.draw.ellipse(screen, (110, 110, 116), (cx - 5, 56 + k * 16, 10, 16), 2)
+            pygame.draw.arc(screen, (150, 150, 158), (cx - 12, 150, 24, 24), 3.14, 6.28, 3)
+        self.glow.fill((0, 0, 0, 0))
+        self.draw_floor(screen, (66, 52, 46), (120, 96, 80), (46, 36, 32))
+        for bx in (150, 480, 810):
+            self.draw_barrel_fire(screen, bx)
+        screen.blit(self.glow, (0, 0))
+        self.draw_gate_slab(screen, 0, 0.0)                                           # the gate that shut behind you
+        self.draw_gate_slab(screen, WIDTH - 64, self.door_t)                          # the gate that opens at the end
+
+    def draw_throne(self, screen):
+        cx = THRONE_X
+        pygame.draw.rect(screen, (74, 48, 38), (cx - 104, THRONE_SEAT - 236, 208, 236))      # tall backrest of car doors
+        pygame.draw.rect(screen, (30, 20, 18), (cx - 104, THRONE_SEAT - 236, 208, 236), 4)
+        for k in range(3):
+            dx = cx - 96 + k * 66
+            pygame.draw.rect(screen, CAR_COLORS[(k * 2) % len(CAR_COLORS)], (dx, THRONE_SEAT - 226, 58, 200))
+            pygame.draw.rect(screen, (30, 20, 18), (dx, THRONE_SEAT - 226, 58, 200), 2)
+            pygame.draw.rect(screen, (30, 36, 44), (dx + 8, THRONE_SEAT - 214, 42, 62))
+            pygame.draw.rect(screen, (30, 20, 18), (dx + 18, THRONE_SEAT - 130, 22, 8))
+        for k in range(5):
+            sx = cx - 96 + k * 48
+            pygame.draw.polygon(screen, (160, 160, 168), [(sx, THRONE_SEAT - 236), (sx + 10, THRONE_SEAT - 266), (sx + 20, THRONE_SEAT - 236)])
+        for k in range(3):                                                                    # the seat: a stack of wrecks
+            y = GROUND_Y + 4 - k * 36
+            draw_car(screen, cx - 46, y, 1.0, CAR_COLORS[(k + 1) % len(CAR_COLORS)], wheels=(k == 0))
+            draw_car(screen, cx + 46, y, 1.0, CAR_COLORS[(k + 4) % len(CAR_COLORS)], wheels=(k == 0))
+        pygame.draw.rect(screen, (40, 36, 40), (cx - 98, THRONE_SEAT, 196, 8))
+        pygame.draw.rect(screen, (150, 130, 110), (cx - 98, THRONE_SEAT, 196, 2))
+
+    def draw_throne_room(self, screen):
+        screen.blit(self.throne_wall, (0, 0))
+        pygame.draw.rect(screen, (30, 20, 18), (0, 40, WIDTH, 16))
+        self.glow.fill((0, 0, 0, 0))
+        pulse = 1 + 0.08 * math.sin(self.anim_t * 2)
+        pygame.draw.circle(self.glow, (255, 90, 50, 34), (THRONE_X, THRONE_SEAT - 120), int(240 * pulse))
+        for bx in (90, 420):
+            self.draw_barrel_fire(screen, bx)
+        self.draw_floor(screen, (44, 34, 32), (110, 84, 70), (30, 24, 22))
+        screen.blit(self.glow, (0, 0))
+        for chx in (230, 600):                                                                # hanging chains
+            for k in range(7):
+                pygame.draw.ellipse(screen, (104, 104, 110), (chx - 5, 56 + k * 16, 10, 16), 2)
+        self.draw_throne(screen)
+
+    def draw_foreground(self, screen):
+        if self.phase == "entering":
+            alpha = int(255 * max(0.0, min(1.0, (self.enter_t - 0.4) / 0.8)))
+            if alpha > 0:
+                self.fade.set_alpha(alpha)
+                screen.blit(self.fade, (0, 0))
+
+
+
+# ------------------------------------------------------------------
+# LEVEL 5: one big sword duel with Buddy in a forest clearing
+#   - you fight with a golden sword (hit 10 times to charge the T special)
+#   - Buddy summons power grunts until he is at half health, then he powers up
+# ------------------------------------------------------------------
+class Level5(Level):
+    def __init__(self, number, player, progress):
+        Level.__init__(self, number, player, progress)
+        self.platforms = [pygame.Rect(r) for r in LEVEL5_PLATFORMS]
+        self.phase = "boss"
+        self.powered = False
+        self.anim_t = 0.0
+        self.summon_timer = L5_SUMMON_FIRST
+        self.summon_warning = 0.0
+        self.power_banner = 0.0
+        player.sword_mode = True
+        player.max_hp = LEVEL5_HP
+        player.free_heals = True
+        player.level_heals = LEVEL5_HEALS     # refilled on every attempt, so dying restores all 10
+        player.hp = player.max_hp
+        self.boss = Enemy("boss", WIDTH - 170, self.number, (200, 60, 60))
+        self.boss.facing = -1
+        self.enemies.append(self.boss)
+        self.boss_spawned = True
+        self.talk_pending = True
+        self.bg = self.make_background()
+
+    # ---------- logic ----------
+    def start_boss_fight(self):
+        pass
+
+    def status_text(self):
+        if self.boss_dead:
+            return "Finish off the power grunts! (" + str(len(self.enemies)) + " left)"
+        return None
+
+    def banner_text(self):
+        if self.power_banner > 0 and int(self.anim_t * 4) % 2 == 0:
+            return "BUDDY IS POWERED UP!"
+        if self.summon_warning > 0:
+            return "BUDDY CALLS " + str(L5_SUMMON_COUNT) + " POWER GRUNTS!"
+        return None
+
+    def spawn_logic(self, dt):
+        if self.boss_dead or self.powered:
+            self.summon_warning = max(0.0, self.summon_warning - dt)
+            return
+        self.summon_warning = max(0.0, self.summon_warning - dt)
+        self.summon_timer -= dt
+        if self.summon_timer <= 0:
+            alive = sum(1 for e in self.enemies if e.kind == "power_grunt")
+            if alive >= 4:
+                self.summon_timer = 3.0
+                return
+            for i in range(L5_SUMMON_COUNT):
+                x = -50 - 45 * (i // 2) if i % 2 == 0 else WIDTH + 50 + 45 * (i // 2)
+                g = Enemy("power_grunt", x, self.number)
+                g.coins = 0                         # summoned grunts give no coins (no farming)
+                self.enemies.append(g)
+            self.summon_warning = 2.5
+            self.summon_timer = L5_SUMMON_EVERY
+
+    def power_up(self):
+        b = self.boss
+        self.powered = True
+        b.powered = True
+        b.attack_time = None
+        b.attack_name = ""
+        b.dash_time = 0.0
+        b.shot_timer = 1.6
+        self.enemy_bullets = []
+        self.hazards = []
+        self.summon_warning = 0.0
+        self.power_banner = 4.0
+        self.pending_dialogue = L5_POWER_TALK
+        self.pending_delay = L5_POWER_DELAY
+
+    def melee(self):
+        p = self.player
+        if p.sword_active():
+            rect = p.sword_rect()
+            for e in self.enemies:
+                if e.hp > 0 and id(e) not in p.sword_hit and rect.colliderect(e.rect):
+                    p.sword_hit.add(id(e))
+                    e.hp -= p.sword_damage
+                    e.flash = 0.12
+                    p.add_charge()
+                    if not e.is_boss:
+                        e.x += p.facing * 22          # small knock-back on grunts
+            for eb in self.enemy_bullets:
+                if eb["alive"] and eb.get("delay", 0.0) <= 0 and rect.collidepoint(int(eb["x"]), int(eb["y"])):
+                    eb["alive"] = False               # your slash knocks shots out of the air
+        for w in p.waves:
+            r = pygame.Rect(0, 0, 70, 170)
+            r.center = (int(w["x"]), int(w["y"]))
+            for e in self.enemies:
+                if e.hp > 0 and id(e) not in w["hit"] and r.colliderect(e.rect):
+                    w["hit"].add(id(e))
+                    e.hp -= p.special_damage
+                    e.flash = 0.2
+            for eb in self.enemy_bullets:
+                if eb["alive"] and eb.get("delay", 0.0) <= 0 and r.collidepoint(int(eb["x"]), int(eb["y"])):
+                    eb["alive"] = False
+
+    def update(self, dt):
+        self.anim_t += dt
+        self.melee()
+        result = Level.update(self, dt)
+        b = self.boss
+        if not self.powered and b is not None and b.hp > 0 and b.hp <= b.max_hp * 0.5:
+            self.power_up()
+        if self.power_banner > 0:
+            self.power_banner = max(0.0, self.power_banner - dt)
+        if result == "won" and len(self.enemies) > 0:
+            result = ""                    # Buddy is down, but everything he summoned must go too
+        return result
+
+    # ---------- drawing ----------
+    def draw_platforms(self, screen):
+        for p in self.platforms:
+            pygame.draw.rect(screen, (112, 76, 48), p, border_radius=6)
+            pygame.draw.rect(screen, (156, 116, 74), (p.left + 4, p.top, p.width - 8, 4), border_radius=2)
+            pygame.draw.rect(screen, (60, 38, 24), p, 2, border_radius=6)
+            for x in range(p.left + 20, p.right - 10, 34):
+                pygame.draw.line(screen, (84, 54, 34), (x, p.top + 4), (x + 6, p.bottom - 3), 2)
+            pygame.draw.ellipse(screen, (170, 130, 86), (p.left - 5, p.top - 1, 14, p.height + 2))
+            pygame.draw.ellipse(screen, (60, 38, 24), (p.left - 5, p.top - 1, 14, p.height + 2), 2)
+            pygame.draw.ellipse(screen, (170, 130, 86), (p.right - 9, p.top - 1, 14, p.height + 2))
+            pygame.draw.ellipse(screen, (60, 38, 24), (p.right - 9, p.top - 1, 14, p.height + 2), 2)
+
+    def make_background(self):
+        rng = random.Random(51)
+        surf = pygame.Surface((WIDTH, HEIGHT))
+        bands = 18
+        for i in range(bands):
+            c = lerp_color((88, 160, 228), (196, 230, 250), i / (bands - 1))
+            top = i * GROUND_Y // bands
+            pygame.draw.rect(surf, c, (0, top, WIDTH, GROUND_Y // bands + 2))
+        halo = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        for r, a in ((120, 26), (86, 40), (60, 70)):
+            pygame.draw.circle(halo, (255, 246, 200, a), (790, 95), r)
+        surf.blit(halo, (0, 0))
+        pygame.draw.circle(surf, (255, 248, 214), (790, 95), 40)
+        for cx, cy, w in ((250, 90, 120),):                                      # one lonely cloud: the sky is clear
+            for dx, dy, rw in ((0, 0, 1.0), (-0.45, 0.12, 0.7), (0.45, 0.12, 0.75)):
+                pygame.draw.ellipse(surf, (252, 253, 255), (cx + dx * w - w * rw / 2, cy + dy * 22 - 16, w * rw, 34))
+        # distant hills and pines
+        pygame.draw.polygon(surf, (120, 176, 160),
+                            [(0, GROUND_Y - 20), (0, GROUND_Y - 120), (180, GROUND_Y - 170), (380, GROUND_Y - 110),
+                             (560, GROUND_Y - 160), (780, GROUND_Y - 100), (WIDTH, GROUND_Y - 140), (WIDTH, GROUND_Y - 20)])
+        for x in range(-20, WIDTH + 40, 34):
+            h = 120 + rng.randint(-24, 30)
+            base = GROUND_Y - 22
+            for tier in range(3):
+                tw = 34 - tier * 7
+                ty = base - tier * h // 4
+                pygame.draw.polygon(surf, (52, 118, 100), [(x - tw, ty), (x, ty - h // 2 + tier * 8), (x + tw, ty)])
+        # middle broadleaf trees
+        x = 30
+        while x < WIDTH + 40:
+            th = rng.randint(120, 175)
+            tw = rng.randint(14, 20)
+            base = GROUND_Y - 6
+            pygame.draw.rect(surf, (96, 66, 42), (x - tw // 2, base - th, tw, th))
+            pygame.draw.rect(surf, (70, 46, 30), (x + tw // 4, base - th, tw // 4 + 2, th))
+            cr = rng.randint(46, 62)
+            for dx, dy, rr in ((0, -th, cr), (-cr * 0.7, -th + 18, cr * 0.75), (cr * 0.7, -th + 18, cr * 0.75), (0, -th - cr * 0.55, cr * 0.7)):
+                pygame.draw.circle(surf, (52, 130, 62), (int(x + dx), int(base + dy)), int(rr))
+            for dx, dy, rr in ((-cr * 0.3, -th - 14, cr * 0.5), (cr * 0.35, -th + 6, cr * 0.4), (-cr * 0.6, -th + 14, cr * 0.32)):
+                pygame.draw.circle(surf, (86, 170, 82), (int(x + dx), int(base + dy)), int(rr))
+            pygame.draw.circle(surf, (132, 204, 100), (int(x - cr * 0.35), int(base - th - cr * 0.45)), int(cr * 0.28))
+            x += rng.randint(96, 140)
+        # the ground: a grassy clearing
+        pygame.draw.rect(surf, (96, 80, 56), (0, GROUND_Y, WIDTH, HEIGHT - GROUND_Y))
+        pygame.draw.rect(surf, (86, 162, 66), (0, GROUND_Y - 2, WIDTH, 26))
+        pygame.draw.rect(surf, (128, 200, 92), (0, GROUND_Y - 2, WIDTH, 6))
+        for gx in range(0, WIDTH, 9):
+            gh = 4 + rng.randint(0, 7)
+            pygame.draw.line(surf, (110, 186, 80), (gx, GROUND_Y - 1), (gx + rng.randint(-3, 3), GROUND_Y - 1 - gh), 2)
+        for gx in range(10, WIDTH, 61):
+            pygame.draw.rect(surf, (70, 58, 40), (gx, GROUND_Y + 30 + (gx * 7) % 40, 16, 4))
+        for fx in range(40, WIDTH, 83):
+            col = rng.choice([(250, 220, 90), (250, 250, 250), (240, 130, 160)])
+            pygame.draw.circle(surf, col, (fx + rng.randint(-8, 8), GROUND_Y + 6 + rng.randint(0, 10)), 3)
+        # big framing trunks at the edges
+        for tx, flip in ((-6, 1), (WIDTH - 30, -1)):
+            pygame.draw.rect(surf, (88, 60, 38), (tx, 0, 36, GROUND_Y + 6))
+            pygame.draw.rect(surf, (62, 40, 26), (tx + (22 if flip == 1 else 0), 0, 14, GROUND_Y + 6))
+            pygame.draw.polygon(surf, (88, 60, 38), [(tx - 10 * flip, GROUND_Y + 8), (tx + 18, GROUND_Y - 40), (tx + 36 + 10 * flip, GROUND_Y + 8)])
+        return surf
+
+    def draw_background(self, screen):
+        screen.blit(self.bg, (0, 0))
+        # drifting leaves
+        for i in range(7):
+            t = (self.anim_t * 26 + i * 137) % (WIDTH + 80)
+            y = (60 + i * 53 + 14 * math.sin(self.anim_t * 1.6 + i)) % (GROUND_Y - 20)
+            pygame.draw.ellipse(screen, (120, 180, 70), (WIDTH - t, y, 8, 4))
+
+
 def make_level(number, player, progress):
+    if number == 5:
+        return Level5(number, player, progress)
+    if number == 4:
+        return Level4(number, player, progress)
     if number == 3:
         return Level3(number, player, progress)
     if number == 2:
@@ -2382,12 +3627,14 @@ def wrap_text(text, font, max_width):
 class Dialogue:
     """Typed-out text box. update() types it, click() finishes the line or moves on."""
 
-    def __init__(self, lines, kind):
+    def __init__(self, lines, kind, delay=0.0):
         self.lines = lines
         self.kind = kind          # "intro" or "boss"
         self.index = 0
         self.chars = 0.0
         self.finished = False
+        self.delay = delay        # each line is locked this long before a click is accepted
+        self.lock = delay
 
     def current_text(self):
         return self.lines[self.index][1]
@@ -2396,15 +3643,19 @@ class Dialogue:
         return int(self.chars) >= len(self.current_text())
 
     def update(self, dt):
+        self.lock = max(0.0, self.lock - dt)
         if not self.line_complete():
             self.chars += TYPE_SPEED * dt
 
     def click(self):
+        if self.lock > 0:
+            return                # still locked: the text has to sink in first
         if not self.line_complete():
             self.chars = float(len(self.current_text()))
         else:
             self.index += 1
             self.chars = 0.0
+            self.lock = self.delay
             if self.index >= len(self.lines):
                 self.finished = True
 
@@ -2433,7 +3684,10 @@ class Dialogue:
             remaining = max(0, remaining - len(line) - 1)
             y += 32
 
-        if self.line_complete() and (pygame.time.get_ticks() // 500) % 2 == 0:
+        if self.lock > 0:
+            label = font_small.render("...", True, (120, 128, 150))
+            screen.blit(label, (box.right - label.get_width() - 20, box.bottom - 30))
+        elif self.line_complete() and (pygame.time.get_ticks() // 500) % 2 == 0:
             last = self.index == len(self.lines) - 1
             hint = "click to start" if last else "click to continue"
             label = font_small.render(hint, True, (170, 180, 210))
@@ -2480,6 +3734,7 @@ class Game:
         self.font_text = pygame.font.SysFont(None, 34)
         self.dim = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
         self.dim.fill((0, 0, 0, 90))
+        init_audio()
         self.dialogue = None
 
         self.progress = load_save()
@@ -2490,6 +3745,7 @@ class Game:
         self.shop_from = "menu"
         self.buttons = []
         self.last_reward = 0
+        self.new_item = False          # shows "new shop item" after beating the unlock level for the first time
         self.set_state("menu")
 
     # ---------- states and buttons ----------
@@ -2521,7 +3777,13 @@ class Game:
             buttons.append(Button((230, 190, 500, 64), dmg_text, "buy_damage", not maxed))
             heal_text = "Heal potion  (" + str(HEAL_PRICE) + " coins)"
             buttons.append(Button((230, 275, 500, 64), heal_text, "buy_heal", p["heals"] < MAX_HEALS))
-            buttons.append(Button((380, 400, 200, 56), "BACK", "back_shop"))
+            ml = p["mag_level"]
+            if mag_unlocked(p):
+                mag_max = ml >= len(MAG_UPGRADE_PRICES)
+                mag_text = "Extended magazine: MAXED" if mag_max else \
+                    "Extended magazine +" + str(MAG_UPGRADE_BULLETS) + "  (" + str(MAG_UPGRADE_PRICES[ml]) + " coins)"
+                buttons.append(Button((230, 375, 500, 56), mag_text, "buy_mag", not mag_max))
+            buttons.append(Button((380, 445, 200, 56), "BACK", "back_shop"))
         elif s == "complete":
             if self.level.number < NUM_LEVELS:
                 buttons.append(Button((380, 300, 200, 56), "NEXT LEVEL", "next"))
@@ -2538,6 +3800,7 @@ class Game:
         get_papyrus_art()          # load enemy sprites now so there is no pause mid-fight
         get_boss_art(number)
         get_rat_art()
+        get_sword_art()
         self.level = make_level(number, self.player, self.progress)
         self.dialogue = None
         if number in LEVEL_INTRO:
@@ -2581,6 +3844,14 @@ class Game:
                 p["damage_level"] += 1
                 write_save(p)
             self.set_state("shop")
+        elif name == "buy_mag":
+            ml = p["mag_level"]
+            if mag_unlocked(p) and ml < len(MAG_UPGRADE_PRICES) \
+                    and p["coins"] >= MAG_UPGRADE_PRICES[ml]:
+                p["coins"] -= MAG_UPGRADE_PRICES[ml]
+                p["mag_level"] += 1
+                write_save(p)
+            self.set_state("shop")
         elif name == "buy_heal":
             if p["heals"] < MAX_HEALS and p["coins"] >= HEAL_PRICE:
                 p["coins"] -= HEAL_PRICE
@@ -2595,10 +3866,20 @@ class Game:
             for event in pygame.event.get():
                 self.handle_event(event)
             self.update(dt)
+            self.update_music()
             self.draw()
             pygame.display.flip()
         write_save(self.progress)
         pygame.quit()
+
+    def update_music(self):
+        """Pick the background music for what is on screen (shop music in the shop, level music in a level)."""
+        if self.state == "shop":
+            set_music("shop")
+        elif self.state == "playing" and self.level is not None:
+            set_music(self.level.music_key())
+        else:
+            set_music(None)
 
     def handle_event(self, event):
         if event.type == pygame.QUIT:
@@ -2616,6 +3897,8 @@ class Game:
                     self.player.jump()
                 if event.key == pygame.K_r:
                     self.player.reload()
+                if event.key == pygame.K_t:
+                    self.player.special()
                 if event.key == HEAL_KEY:
                     self.player.use_heal()
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
@@ -2646,6 +3929,7 @@ class Game:
         self.player.update(dt, direction, self.level.platforms)
         result = self.level.update(dt)
 
+        # WHY: Level code only raises flags; Game owns the dialogue box, so the hand-off happens here.
         if self.level.talk_pending:
             self.level.talk_pending = False
             if self.level.number in LEVEL_BOSS_TALK:
@@ -2654,12 +3938,16 @@ class Game:
                 self.level.start_boss_fight()
 
         if self.level.pending_dialogue is not None:
-            self.dialogue = Dialogue(self.level.pending_dialogue, "phase")
+            self.dialogue = Dialogue(self.level.pending_dialogue, "phase", self.level.pending_delay)
             self.level.pending_dialogue = None
+            self.level.pending_delay = 0.0
 
         if result == "won":
             n = self.level.number
+            # WHY: Only announce the new shop item the first time level 2 is beaten, not on every replay.
+            self.new_item = n == MAG_UPGRADE_UNLOCK and n not in self.progress["beaten"]
             if n in self.progress["beaten"]:
+                # WHY: Replays pay nothing so coins stay meaningful.
                 self.last_reward = 0                           # coins are only paid the first time
             else:
                 self.last_reward = 20 * n + self.level.earned  # level bonus + coins from this run
@@ -2667,6 +3955,7 @@ class Game:
             self.progress["coins"] += self.last_reward
             self.progress["unlocked"] = max(self.progress["unlocked"], min(n + 1, NUM_LEVELS))
             write_save(self.progress)
+            play_sfx("beat")
             self.set_state("victory" if n == FINAL_LEVEL else "complete")
         elif result == "lost":
             write_save(self.progress)
@@ -2719,11 +4008,13 @@ class Game:
             else:
                 msg = "+" + str(self.last_reward) + " coins earned   (total " + str(p["coins"]) + ")"
             self.text(msg, self.font_mid, white, (WIDTH // 2, 220))
+            if self.new_item:
+                self.text("NEW SHOP ITEM: Extended Magazine!", self.font_mid, gold, (WIDTH // 2, 262))
         elif s == "gameover":
             self.text("YOU DIED", self.font_big, (230, 70, 70), (WIDTH // 2, 170))
         elif s == "victory":
             self.text("YOU BEAT THE GAME!", self.font_big, gold, (WIDTH // 2, 160))
-            self.text("The Big Boss is down.", self.font_mid, white, (WIDTH // 2, 240))
+            self.text("Buddy is down.", self.font_mid, white, (WIDTH // 2, 240))
 
     def draw_play(self):
         lv = self.level
@@ -2741,20 +4032,30 @@ class Game:
         lv = self.level
         white = (255, 255, 255)
         pygame.draw.rect(self.screen, (80, 0, 0), (16, 16, 220, 20))
-        pygame.draw.rect(self.screen, (0, 200, 60), (16, 16, 220 * max(0, p.hp) / MAX_HP, 20))
+        pygame.draw.rect(self.screen, (0, 200, 60), (16, 16, 220 * max(0, p.hp) / p.max_hp, 20))
         pygame.draw.rect(self.screen, white, (16, 16, 220, 20), 2)
-        self.text("HP " + str(int(max(0, p.hp))) + "/" + str(MAX_HP), self.font_small, white, (126, 26))
+        self.text("HP " + str(int(max(0, p.hp))) + "/" + str(p.max_hp), self.font_small, white, (126, 26))
 
-        icon = p.pistol.right[PISTOL_ICON]
-        small = pygame.transform.scale(icon, (icon.get_width() // 3, icon.get_height() // 3))
-        self.screen.blit(small, (16, 44))
-        if p.pistol.ammo > 0 and p.pistol.sequence is not RELOAD_SEQUENCE:
-            ammo_text = str(p.pistol.ammo) + "/" + str(MAG_SIZE)
+        if p.sword_mode:
+            pygame.draw.rect(self.screen, (50, 38, 0), (16, 44, 220, 18))
+            pygame.draw.rect(self.screen, (255, 200, 40), (16, 44, 220 * p.special_charge / SPECIAL_HITS, 18))
+            pygame.draw.rect(self.screen, white, (16, 44, 220, 18), 2)
+            if p.special_ready:
+                if (pygame.time.get_ticks() // 250) % 2 == 0:
+                    self.text("SPECIAL READY - PRESS T", self.font_small, (255, 235, 120), (126, 53))
+            else:
+                self.text("SPECIAL  " + str(p.special_charge) + "/" + str(SPECIAL_HITS), self.font_small, white, (126, 53))
         else:
-            ammo_text = "RELOADING"
-        self.text(ammo_text, self.font_small, white, (16 + small.get_width() + 55, 62))
+            icon = p.pistol.right[PISTOL_ICON]
+            small = pygame.transform.scale(icon, (icon.get_width() // 3, icon.get_height() // 3))
+            self.screen.blit(small, (16, 44))
+            if p.pistol.ammo > 0 and p.pistol.sequence is not RELOAD_SEQUENCE:
+                ammo_text = str(p.pistol.ammo) + "/" + str(p.pistol.mag_size)
+            else:
+                ammo_text = "RELOADING"
+            self.text(ammo_text, self.font_small, white, (16 + small.get_width() + 55, 62))
 
-        self.text("[H] Heals: " + str(self.progress["heals"]), self.font_small, white, (80, 100))
+        self.text("[H] Heals: " + (str(p.level_heals) if p.free_heals else str(self.progress["heals"])), self.font_small, white, (80, 100))
         if lv.replay:
             coin_text = "Coins: " + str(self.progress["coins"]) + "  (already beaten: no coins)"
         else:
